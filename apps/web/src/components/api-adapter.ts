@@ -114,7 +114,6 @@ export const frontendApi = {
   session: snagTimeApi.session,
   login: snagTimeApi.login,
   logout: snagTimeApi.logout,
-  signup: snagTimeApi.signup,
   requestPasswordReset: snagTimeApi.requestPasswordReset,
   resetPassword: snagTimeApi.resetPassword,
   requestEmailVerification: snagTimeApi.requestEmailVerification,
@@ -123,12 +122,6 @@ export const frontendApi = {
   updateProfileImage: snagTimeApi.updateProfileImage,
   changePassword: snagTimeApi.changePassword,
   completeOnboarding: snagTimeApi.completeOnboarding,
-  switchWorkspace: snagTimeApi.switchWorkspace,
-  listWorkspaceMembers: snagTimeApi.listWorkspaceMembers,
-  updateWorkspaceMember: snagTimeApi.updateWorkspaceMember,
-  listWorkspaceInvitations: snagTimeApi.listWorkspaceInvitations,
-  createWorkspaceInvitation: snagTimeApi.createWorkspaceInvitation,
-  acceptWorkspaceInvitation: snagTimeApi.acceptWorkspaceInvitation,
   async listEventTypes() {
     return (await snagTimeApi.listEventTypes()).map(mapEventType);
   },
@@ -144,6 +137,7 @@ export const frontendApi = {
   async getAvailability() { const schedule = await snagTimeApi.getAvailability(); return { days: mapAvailability(schedule), timeZone: schedule.timeZone, overrides: schedule.overrides ?? [] }; },
   async saveAvailability(days: AvailabilityDay[], timeZone: string, overrides: AvailabilityOverride[]) { const schedule = await snagTimeApi.setAvailability({ ...toAvailability(days, timeZone), overrides }); return { days: mapAvailability(schedule), timeZone: schedule.timeZone, overrides: schedule.overrides ?? [] }; },
   async listBookings(organizerTimeZone?: string) { return (await snagTimeApi.listBookings()).map((item) => mapBooking(item, organizerTimeZone)); },
+  enterClientGate: snagTimeApi.enterClientGate,
   async getPublicEvent(slug: string) { return mapEventType(await snagTimeApi.getPublicEventType(slug)); },
   async getSlots(slug: string, from: string, to: string, timeZone: string, durationId?: string, signal?: AbortSignal): Promise<BookingSlot[]> { return snagTimeApi.getSlots(slug, from, to, timeZone, durationId, signal); },
   createBooking: snagTimeApi.createBooking,

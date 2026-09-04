@@ -8,6 +8,7 @@ import { currentDatabaseContext, enterDatabaseAction } from "@/server/db-context
 import { decryptToken, encryptToken } from "@/server/crypto/tokens";
 import { AppError } from "@/server/errors";
 import type { BusyInterval } from "@/server/services/availability";
+import { appBaseUrl, bookingTokenBinding, materializeActionToken } from "@/server/services/notifications";
 
 export type CalendarBooking = Booking & { eventType: EventType; host: Pick<User,"id"|"name"|"email"|"timeZone"> };
 export const CALENDAR_PROVIDER_TIMEOUT_MS = 15_000;
@@ -241,8 +242,9 @@ export class GoogleCalendarService implements CalendarService {
   }
 
   async createBookingEvent(booking: CalendarBooking) {
+    const description = await bookingEventDescription(booking);
     const { calendar, calendarId, flushTokens } = await this.client(booking.hostId, booking.workspaceId); const eventId = providerCalendarEventId(booking.id);
-    try { const response = await calendar.events.insert(googleCreateEventRequest(calendarId, eventId, booking), { timeout: CALENDAR_PROVIDER_TIMEOUT_MS });
+    try { const response = await calendar.events.insert(googleCreateEventRequest(calendarId, eventId, booking, description), { timeout: CALENDAR_PROVIDER_TIMEOUT_MS });
     return { eventId: response.data.id || eventId, etag: response.data.etag, disposition: "created" as const };
     } catch (error) {
       if (isProviderConflict(error)) return { eventId, disposition: "conflict" as const };
@@ -252,6 +254,7 @@ export class GoogleCalendarService implements CalendarService {
 
   async updateBookingEvent(booking: CalendarBooking) {
     const eventId = booking.externalCalendarEventId || providerCalendarEventId(booking.id);
+    const description = await bookingEventDescription(booking);
     const { calendar, calendarId, flushTokens } = await this.client(booking.hostId, booking.workspaceId);
     try {
       return await reconcileGoogleEventUpdate(
@@ -262,7 +265,7 @@ export class GoogleCalendarService implements CalendarService {
           if (!creation) throw new Error("GOOGLE_EVENT_CREATE_REQUIRED");
           return typeof creation === "string" ? { disposition: "conflict" as const } : creation;
         },
-        async (etag) => (await calendar.events.patch(googleUpdateEventRequest(calendarId, eventId, booking), googleConditionalRequestOptions(etag))).data.etag,
+        async (etag) => (await calendar.events.patch(googleUpdateEventRequest(calendarId, eventId, booking, description), googleConditionalRequestOptions(etag))).data.etag,
       );
     } finally { await flushTokens(); }
   }
@@ -285,13 +288,33 @@ export class GoogleCalendarService implements CalendarService {
 }
 
 export function providerCalendarEventId(bookingId: string) { return `tc${createHash("sha256").update(bookingId).digest("hex").slice(0, 40)}`; }
-export function googleCreateEventRequest(calendarId: string, eventId: string, booking: CalendarBooking) {
+// With Google's invitation acting as the client's confirmation, the event body must carry everything the
+// suppressed email would have: the custom answers for the organizer's phone, the client's only manage link,
+// and the warning that an RSVP decline is not a cancellation (nothing reconciles a "No" back into SnagTime).
+export async function bookingEventDescription(booking: CalendarBooking, now = new Date()) {
+  const lines: string[] = [];
+  if (booking.notes) lines.push(booking.notes);
+  const answers = await db.bookingAnswer.findMany({ where: { bookingId: booking.id }, orderBy: { questionLabel: "asc" } });
+  for (const answer of answers) {
+    let value: unknown; try { value = JSON.parse(answer.valueJson); } catch { value = answer.valueJson; }
+    const rendered = Array.isArray(value) ? value.join(", ") : typeof value === "boolean" ? (value ? "Yes" : "No") : String(value ?? "");
+    if (rendered.trim()) lines.push(`${answer.questionLabel}: ${rendered.trim()}`);
+  }
+  const recovery = await db.bookingRecoveryToken.findFirst({ where: { bookingId: booking.id, consumedAt: null, revokedAt: null, expiresAt: { gt: now } }, orderBy: { createdAt: "desc" } });
+  if (recovery) {
+    const token = materializeActionToken(recovery.id, "BOOKING_RECOVERY", bookingTokenBinding(recovery.workspaceId, recovery.bookingId, recovery.email));
+    lines.push(`Need to change or cancel? Use this link:\n${appBaseUrl()}/manage/${booking.id}/reschedule#recovery=${encodeURIComponent(token)}`);
+    lines.push("Declining this calendar invitation does NOT cancel the appointment. Use the link above, or contact the shop.");
+  }
+  return lines.join("\n\n") || undefined;
+}
+export function googleCreateEventRequest(calendarId: string, eventId: string, booking: CalendarBooking, description?: string) {
   const locationType = booking.locationTypeSnapshot || booking.eventType.locationType;
   const title = booking.eventTitleSnapshot || booking.eventType.name;
   return {
     calendarId, conferenceDataVersion: locationType === "GOOGLE_MEET" ? 1 : 0, sendUpdates: "all" as const,
     requestBody: {
-      id: eventId, summary: `${title} with ${booking.inviteeName}`, description: booking.notes || undefined,
+      id: eventId, summary: `${title} with ${booking.inviteeName}`, description: description ?? (booking.notes || undefined),
       location: booking.locationValueSnapshot || undefined,
       start: { dateTime: booking.startAt.toISOString(), timeZone: booking.host.timeZone }, end: { dateTime: booking.endAt.toISOString(), timeZone: booking.host.timeZone },
       attendees: [{ email: booking.inviteeEmail, displayName: booking.inviteeName }],
@@ -300,10 +323,12 @@ export function googleCreateEventRequest(calendarId: string, eventId: string, bo
     },
   };
 }
-export function googleUpdateEventRequest(calendarId: string, eventId: string, booking: CalendarBooking) {
+export function googleUpdateEventRequest(calendarId: string, eventId: string, booking: CalendarBooking, description?: string) {
   return { calendarId, eventId, sendUpdates: "all" as const, requestBody: {
     start: { dateTime: booking.startAt.toISOString(), timeZone: booking.host.timeZone }, end: { dateTime: booking.endAt.toISOString(), timeZone: booking.host.timeZone },
     attendees: [{ email: booking.inviteeEmail, displayName: booking.inviteeName }],
+    // Rescheduling revokes and reissues the recovery token, so the event's manage link must be refreshed with it.
+    ...(description !== undefined ? { description } : {}),
   } };
 }
 export function googleDeleteEventRequest(calendarId: string, eventId: string) { return { calendarId, eventId, sendUpdates: "all" as const }; }

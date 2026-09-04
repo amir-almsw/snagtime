@@ -171,9 +171,11 @@ export function assertProductionRuntimeSecurity() {
   if (process.env.OUTBOX_WORKER_MODE !== "dedicated") throw new Error("Production requires a dedicated outbox worker.");
   if (databaseRole === "app" && (process.env.TRUST_PROXY !== "true" || Buffer.byteLength(process.env.PROXY_SHARED_SECRET || "") < 32)) throw new Error("Production requires authenticated trusted-proxy ingress with a strong PROXY_SHARED_SECRET.");
   if (databaseRole === "app" && Buffer.byteLength(process.env.OPERATOR_HEALTH_SECRET || "") < 32) throw new Error("Production requires a strong OPERATOR_HEALTH_SECRET.");
-  if (process.env.DEMO_MODE === "true" || process.env.PAYMENTS_PROVIDER !== "stripe" || process.env.CALENDAR_PROVIDER !== "google") throw new Error("Production forbids demo/local provider fallbacks.");
+  if (databaseRole === "app" && (!/^scrypt:v1:/.test(process.env.CLIENT_GATE_PASSWORD_HASH || "") || Buffer.byteLength(process.env.CLIENT_GATE_SECRET || "") < 32 || process.env.CLIENT_GATE_SECRET === (process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET))) throw new Error("Production requires an independent CLIENT_GATE_SECRET and a scrypt:v1 CLIENT_GATE_PASSWORD_HASH.");
+  if (databaseRole === "app" && !["book","admin"].includes(process.env.SURFACE || "")) throw new Error("Production requires SURFACE=book or SURFACE=admin so origin isolation cannot be silently disabled.");
+  if (process.env.DEMO_MODE === "true" || process.env.CALENDAR_PROVIDER !== "google") throw new Error("Production forbids demo/local provider fallbacks.");
+  if (process.env.PAYMENTS_PROVIDER !== "stub") throw new Error("Payments are removed from this deployment; production requires PAYMENTS_PROVIDER=stub.");
   if (!process.env.GOOGLE_CLIENT_ID?.endsWith(".apps.googleusercontent.com") || Buffer.byteLength(process.env.GOOGLE_CLIENT_SECRET || "") < 16) throw new Error("Production Google OAuth configuration is incomplete.");
-  if (!process.env.STRIPE_SECRET_KEY?.startsWith("sk_test_") || (databaseRole === "app" && !process.env.STRIPE_WEBHOOK_SECRET?.startsWith("whsec_"))) throw new Error("Production payment provider configuration is incomplete or not test-isolated.");
   if (process.env.EMAIL_PROVIDER !== "smtp" || !["implicit","starttls"].includes(process.env.SMTP_TLS_MODE || "") || ["EMAIL_TOKEN_SECRET","SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASSWORD","EMAIL_FROM","EMAIL_REPLY_TO","EMAIL_SENDER_DOMAIN"].some((name) => !process.env[name])) throw new Error("Production requires complete TLS SMTP, system sender identity, and EMAIL_TOKEN_SECRET configuration.");
   systemEmailIdentity();
   if (Buffer.byteLength(process.env.EMAIL_TOKEN_SECRET || "") < 32) throw new Error("Production requires EMAIL_TOKEN_SECRET with at least 32 bytes.");

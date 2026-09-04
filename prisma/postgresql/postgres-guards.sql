@@ -39,7 +39,7 @@ GRANT SELECT,DELETE ON "OAuthConnection" TO tempocove_worker;
 GRANT UPDATE("accessToken","refreshToken","expiresAt","disconnectStatus","disconnectRetryAt","disconnectLeaseToken","disconnectLeaseExpiresAt","disconnectErrorCode","updatedAt") ON "OAuthConnection" TO tempocove_worker;
 GRANT SELECT,INSERT ON "LocalInboxMessage" TO tempocove_worker;
 GRANT SELECT,INSERT,UPDATE ON "WorkerHeartbeat" TO tempocove_worker;
-GRANT SELECT ON "EventType","Workspace","Membership","BookingRecoveryToken","AccountActionToken","WorkspaceInvitation" TO tempocove_worker;
+GRANT SELECT ON "EventType","Workspace","Membership","BookingRecoveryToken","AccountActionToken","WorkspaceInvitation","BookingAnswer" TO tempocove_worker;
 GRANT SELECT(id,email,name,"imageUrl","timeZone","emailVerifiedAt","createdAt","updatedAt") ON "User" TO tempocove_worker;
 
 CREATE OR REPLACE FUNCTION tempocove_guard_booking_workspace() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
@@ -745,7 +745,7 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY['IntegrationOutbox','EmailOutbox','Booking','OAuthConnection','LocalInboxMessage','WorkerHeartbeat'] LOOP
     EXECUTE format('CREATE POLICY worker_effects ON %I FOR ALL TO tempocove_worker USING (true) WITH CHECK (true)',table_name);
   END LOOP;
-  FOREACH table_name IN ARRAY ARRAY['EventType','User','Workspace','Membership','BookingRecoveryToken','AccountActionToken','WorkspaceInvitation'] LOOP
+  FOREACH table_name IN ARRAY ARRAY['EventType','User','Workspace','Membership','BookingRecoveryToken','AccountActionToken','WorkspaceInvitation','BookingAnswer'] LOOP
     EXECUTE format('CREATE POLICY worker_reference ON %I FOR SELECT TO tempocove_worker USING (true)',table_name);
   END LOOP;
 END $worker_rls$;

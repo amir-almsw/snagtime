@@ -10,6 +10,12 @@ const workerBookingInclude = { eventType: true, host: { select: { id: true, name
 
 function assertWorkerRunning(signal?: AbortSignal) { if (signal?.aborted) throw new Error("OUTBOX_WORKER_STOPPING"); }
 
+// Once Google has notified the client (sendUpdates: "all" on create/update/delete), the deferred
+// SnagTime copy is redundant: mark it superseded so exactly one client message goes out per change.
+async function supersedeInviteeEmailAfterGoogleNotice(bookingId: string, kind: string, inviteeEmail: string) {
+  await db.emailOutbox.updateMany({ where: { bookingId, kind, recipientEmail: inviteeEmail.toLowerCase(), status: "PENDING" }, data: { status: "SUPERSEDED", completedAt: new Date(), lastErrorCode: "GOOGLE_INVITE_SENT" } });
+}
+
 export async function withProviderDeadline<T>(operation: Promise<T>, timeoutMs = CALENDAR_PROVIDER_TIMEOUT_MS) {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -106,6 +112,7 @@ export async function processOutbox(workspaceId: string, bookingId?: string, now
         else {
           const attached = await db.booking.updateMany({ where: { id: booking.id, status: { not: "CANCELLED" }, mutationVersion: booking.mutationVersion, calendarLeaseToken: leaseToken }, data: { externalCalendarEventId: eventId, externalCalendarEventEtag: eventEtag, calendarLeaseToken: null, calendarLeaseExpiresAt: null, calendarSyncStatus: "SYNCED", notificationStatus: "GOOGLE_UPDATE_ACCEPTED" } });
           if (attached.count !== 1) throw new Error("CALENDAR_LEASE_FENCE_LOST");
+          if (booking.calendarProviderSnapshot === "google") await supersedeInviteeEmailAfterGoogleNotice(booking.id, "BOOKING_CONFIRMED", booking.inviteeEmail);
         }
       } else if (effect.kind === "CALENDAR_UPDATE") {
         if (effect.bookingMutationVersion == null) {
@@ -136,6 +143,7 @@ export async function processOutbox(workspaceId: string, bookingId?: string, now
           calendarLeaseToken: null, calendarLeaseExpiresAt: null, calendarSyncStatus: resolvedEventId ? "SYNCED" : "LOCAL", notificationStatus: resolvedEventId ? "GOOGLE_UPDATE_ACCEPTED" : "LOCAL_NO_EMAIL",
         } });
         if (completed.count !== 1) throw new Error("CALENDAR_LEASE_FENCE_LOST");
+        if (active.calendarProviderSnapshot === "google" && resolvedEventId) await supersedeInviteeEmailAfterGoogleNotice(active.id, "BOOKING_RESCHEDULED", active.inviteeEmail);
       } else if (effect.kind === "CALENDAR_DELETE") {
         const lifecycleLease = await db.booking.updateMany({ where: {
           id: booking.id, mutationVersion: booking.mutationVersion,
@@ -170,6 +178,7 @@ export async function processOutbox(workspaceId: string, bookingId?: string, now
         }
         const completed = await db.booking.updateMany({ where: { id: active.id, mutationVersion: active.mutationVersion, calendarLeaseToken: leaseToken }, data: { externalCalendarEventId: null, externalCalendarEventEtag: null, calendarLeaseToken: null, calendarLeaseExpiresAt: null, calendarSyncStatus: "LOCAL", notificationStatus: deleteTarget ? "GOOGLE_UPDATE_ACCEPTED" : "LOCAL_NO_EMAIL" } });
         if (completed.count !== 1) throw new Error("CALENDAR_LEASE_FENCE_LOST");
+        if (active.calendarProviderSnapshot === "google" && deleteTarget) await supersedeInviteeEmailAfterGoogleNotice(active.id, "BOOKING_CANCELLED", active.inviteeEmail);
       } else if (effect.kind === "STRIPE_EXPIRE" && booking.stripeCheckoutSessionId) {
         assertWorkerRunning(signal);
         await payments.expireCheckout(booking.stripeCheckoutSessionId);

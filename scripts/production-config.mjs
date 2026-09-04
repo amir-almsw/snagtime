@@ -1,6 +1,6 @@
 const mode = process.argv[2] || "runtime"; const errors = []; const databaseRole = process.env.DATABASE_ROLE || "app"; const runtimeDatabaseName = databaseRole === "worker" ? "WORKER_DATABASE_URL" : "DATABASE_URL";
-const required = mode === "migration" ? ["DATABASE_URL","DATABASE_PROVIDER"] : [runtimeDatabaseName,"DATABASE_PROVIDER","NEXT_PUBLIC_APP_URL","TOKEN_ENCRYPTION_KEY","EMAIL_TOKEN_SECRET","GOOGLE_CLIENT_ID","GOOGLE_CLIENT_SECRET","STRIPE_SECRET_KEY","BUILD_ID"];
-if (mode !== "migration" && databaseRole === "app") required.push("AUTH_SECRET","BOOKING_CAPABILITY_KEY_ID","BOOKING_CAPABILITY_SECRET","TENANT_CONTEXT_SECRET","RATE_LIMIT_HASH_SECRET","STRIPE_WEBHOOK_SECRET","PROXY_SHARED_SECRET","OPERATOR_HEALTH_SECRET");
+const required = mode === "migration" ? ["DATABASE_URL","DATABASE_PROVIDER"] : [runtimeDatabaseName,"DATABASE_PROVIDER","NEXT_PUBLIC_APP_URL","TOKEN_ENCRYPTION_KEY","EMAIL_TOKEN_SECRET","GOOGLE_CLIENT_ID","GOOGLE_CLIENT_SECRET","BUILD_ID"];
+if (mode !== "migration" && databaseRole === "app") required.push("AUTH_SECRET","BOOKING_CAPABILITY_KEY_ID","BOOKING_CAPABILITY_SECRET","TENANT_CONTEXT_SECRET","RATE_LIMIT_HASH_SECRET","PROXY_SHARED_SECRET","OPERATOR_HEALTH_SECRET","CLIENT_GATE_PASSWORD_HASH","CLIENT_GATE_SECRET");
 for (const name of required) if (!process.env[name]) errors.push(`${name} is required`);
 if (process.env.DATABASE_PROVIDER !== "postgresql" || !/^postgres(?:ql)?:\/\//.test(process.env[runtimeDatabaseName] || "")) errors.push("role-specific PostgreSQL is required");
 if (!/[?&]sslmode=verify-full(?:&|$)/.test(process.env[runtimeDatabaseName] || "") || !/[?&]sslrootcert=[^&]+/.test(process.env[runtimeDatabaseName] || "")) errors.push("PostgreSQL TLS verification with explicit CA is required");
@@ -8,9 +8,12 @@ if(mode!=="migration"&&(!/[?&]connect_timeout=[1-5](?:&|$)/.test(process.env[run
 if (mode !== "migration") {
   if (!/^[A-Fa-f0-9]{40,64}$/.test(process.env.BUILD_ID || "")) errors.push("immutable hexadecimal build identity required");
   try { const origin = new URL(process.env.NEXT_PUBLIC_APP_URL || ""); if (origin.protocol !== "https:" || origin.pathname !== "/" || origin.search || origin.hash || origin.username || origin.password) errors.push("canonical HTTPS origin required"); } catch { errors.push("canonical HTTPS origin required"); }
-  for (const name of ["EMAIL_TOKEN_SECRET",...(databaseRole === "app" ? ["RATE_LIMIT_HASH_SECRET","AUTH_SECRET","BOOKING_CAPABILITY_SECRET","PROXY_SHARED_SECRET","OPERATOR_HEALTH_SECRET"] : [])]) if (Buffer.byteLength(process.env[name] || "") < 32) errors.push(`${name} must contain at least 32 bytes`);
+  for (const name of ["EMAIL_TOKEN_SECRET",...(databaseRole === "app" ? ["RATE_LIMIT_HASH_SECRET","AUTH_SECRET","BOOKING_CAPABILITY_SECRET","PROXY_SHARED_SECRET","OPERATOR_HEALTH_SECRET","CLIENT_GATE_SECRET"] : [])]) if (Buffer.byteLength(process.env[name] || "") < 32) errors.push(`${name} must contain at least 32 bytes`);
   if (databaseRole === "app" && !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(process.env.BOOKING_CAPABILITY_KEY_ID || "")) errors.push("BOOKING_CAPABILITY_KEY_ID is invalid");
   if (databaseRole === "app" && process.env.BOOKING_CAPABILITY_SECRET === process.env.AUTH_SECRET) errors.push("BOOKING_CAPABILITY_SECRET must be independent from AUTH_SECRET");
+  if (databaseRole === "app" && process.env.CLIENT_GATE_SECRET === process.env.AUTH_SECRET) errors.push("CLIENT_GATE_SECRET must be independent from AUTH_SECRET");
+  if (databaseRole === "app" && !/^scrypt:v1:/.test(process.env.CLIENT_GATE_PASSWORD_HASH || "")) errors.push("CLIENT_GATE_PASSWORD_HASH must be a scrypt:v1 encoded hash, never a plaintext password");
+  if (databaseRole === "app" && !["book","admin"].includes(process.env.SURFACE || "")) errors.push("SURFACE must equal book or admin so origin isolation cannot be silently disabled");
 }
 if (mode !== "migration") {
   if (databaseRole === "app" && process.env.RATE_LIMIT_PROVIDER !== "postgresql") errors.push("distributed PostgreSQL limiter required");
@@ -18,10 +21,10 @@ if (mode !== "migration") {
   if (!/^[0-9A-Fa-f]{64}$/.test(process.env.TOKEN_ENCRYPTION_KEY || "") || new Set(Buffer.from(process.env.TOKEN_ENCRYPTION_KEY || "", "hex")).size < 16) errors.push("diverse token encryption key required");
   if (process.env.OUTBOX_WORKER_MODE !== "dedicated") errors.push("dedicated worker required");
   if (databaseRole === "app" && process.env.TRUST_PROXY !== "true") errors.push("trusted ingress required");
-  if (process.env.DEMO_MODE === "true" || process.env.EMAIL_PROVIDER !== "smtp" || process.env.CALENDAR_PROVIDER !== "google" || process.env.PAYMENTS_PROVIDER !== "stripe") errors.push("demo/local providers forbidden");
+  if (process.env.DEMO_MODE === "true" || process.env.EMAIL_PROVIDER !== "smtp" || process.env.CALENDAR_PROVIDER !== "google") errors.push("demo/local providers forbidden");
+  if (process.env.PAYMENTS_PROVIDER !== "stub") errors.push("payments are removed from this deployment; PAYMENTS_PROVIDER must equal stub");
   if (!["implicit","starttls"].includes(process.env.SMTP_TLS_MODE || "")) errors.push("TLS SMTP mode required");
   if (!process.env.GOOGLE_CLIENT_ID?.endsWith(".apps.googleusercontent.com") || Buffer.byteLength(process.env.GOOGLE_CLIENT_SECRET || "") < 16) errors.push("Google OAuth configuration incomplete");
-  if (!process.env.STRIPE_SECRET_KEY?.startsWith("sk_test_") || (databaseRole === "app" && !process.env.STRIPE_WEBHOOK_SECRET?.startsWith("whsec_"))) errors.push("Stripe test configuration incomplete");
   const senderDomain = (process.env.EMAIL_SENDER_DOMAIN || "").toLowerCase(); const mailbox = (process.env.EMAIL_FROM || "").match(/<([^<>]+)>$/)?.[1] || process.env.EMAIL_FROM || "";
   if (!process.env.EMAIL_REPLY_TO || !senderDomain || !mailbox.toLowerCase().endsWith(`@${senderDomain}`)) errors.push("system email sender and Reply-To contract incomplete");
 }

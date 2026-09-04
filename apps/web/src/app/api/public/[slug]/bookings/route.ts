@@ -4,10 +4,12 @@ import { bookingInput } from "@/server/validation";
 import { AppError } from "@/server/errors";
 import { clientAddress, enforceRateLimit } from "@/server/rate-limit";
 import { exchangeBookingCapabilities, manageCookieName, manageCookieOptions } from "@/server/auth/capabilities";
+import { requireClientGate } from "@/server/auth/client-gate";
 
 type Context = { params: Promise<{ slug: string }> };
 export async function POST(request: Request, context: Context) {
   try {
+    requireClientGate(request);
     const { slug } = await context.params;
     // The untrusted local-demo bucket is intentionally fixed and bounded, but large enough for a room of demo users.
     await enforceRateLimit(`public-booking:${clientAddress(request)}`, 120, 60_000);

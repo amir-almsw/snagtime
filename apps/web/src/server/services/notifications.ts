@@ -6,7 +6,7 @@ import { db } from "@/server/db";
 import { decryptToken, encryptToken } from "@/server/crypto/tokens";
 import { systemEmailIdentity, validatedMailbox } from "@/server/email-config";
 
-export type EmailKind = "EMAIL_VERIFY" | "PASSWORD_RESET" | "WORKSPACE_INVITATION" | "BOOKING_RECOVERY" | "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED";
+export type EmailKind = "EMAIL_VERIFY" | "PASSWORD_RESET" | "WORKSPACE_INVITATION" | "BOOKING_RECOVERY" | "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED" | "BOOKING_REMINDER";
 export type EmailDelivery = { workspaceId: string; outboxId: string; idempotencyKey: string; recipientEmail: string; subject: string; text: string; replyTo?: string };
 export interface EmailProvider { send(message: EmailDelivery, signal?: AbortSignal): Promise<void> }
 export const EMAIL_LEASE_MS = 60_000;
@@ -40,16 +40,20 @@ export function bookingTokenBinding(workspaceId: string, bookingId: string, emai
 export function invitationTokenBinding(workspaceId: string, email: string, role: string, version: number) { return `${workspaceId}\0${email}\0${role}\0${version}`; }
 
 type Transaction = Prisma.TransactionClient;
-type EnqueueEmail = { workspaceId: string; bookingId?: string; kind: EmailKind; recipientEmail: string; subject: string; payload: Record<string, unknown>; idempotencyKey: string; bookingMutationVersion?: number };
+type EnqueueEmail = { workspaceId: string; bookingId?: string; kind: EmailKind; recipientEmail: string; subject: string; payload: Record<string, unknown>; idempotencyKey: string; bookingMutationVersion?: number; nextAttemptAt?: Date };
 export async function enqueueEmail(tx: Transaction, input: EnqueueEmail) {
   return tx.emailOutbox.upsert({ where: { idempotencyKey: input.idempotencyKey }, update: {}, create: {
     workspaceId: input.workspaceId, bookingId: input.bookingId, kind: input.kind, recipientEmail: input.recipientEmail.toLowerCase(),
     subjectSnapshot: input.subject, payloadJson: JSON.stringify(input.payload), idempotencyKey: input.idempotencyKey,
-    bookingMutationVersion: input.bookingMutationVersion,
+    bookingMutationVersion: input.bookingMutationVersion, nextAttemptAt: input.nextAttemptAt,
   } });
 }
 
-type BookingEmailSnapshot = { id: string; workspaceId: string; hostId: string; inviteeName: string; inviteeEmail: string; inviteeTimeZone: string; eventTitleSnapshot: string; startAt: Date; endAt: Date; priceCents: number; currency: string; stripePaymentStatus: string | null; refundStatus?: string; mutationVersion: number };
+type BookingEmailSnapshot = { id: string; workspaceId: string; hostId: string; inviteeName: string; inviteeEmail: string; inviteeTimeZone: string; eventTitleSnapshot: string; startAt: Date; endAt: Date; priceCents: number; currency: string; stripePaymentStatus: string | null; refundStatus?: string; mutationVersion: number; calendarProviderSnapshot?: string | null };
+// When Google Calendar carries the booking, its invitation IS the client's confirmation. The SnagTime
+// copy is deferred rather than dropped: a successful provider notice supersedes it (outbox.ts), and a
+// provider failure lets it deliver as the fallback so a Google outage never leaves clients unnotified.
+export const GOOGLE_INVITE_FALLBACK_MS = 5 * 60_000;
 function paymentTruth(booking: BookingEmailSnapshot) {
   if (booking.priceCents === 0) return "No payment required";
   if (booking.refundStatus === "REFUNDED") return "Refunded";
@@ -66,7 +70,8 @@ export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmail
   const action = kind === "BOOKING_CANCELLED" ? "cancelled" : kind === "BOOKING_RESCHEDULED" ? "rescheduled" : "confirmed";
   await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: booking.inviteeEmail, subject: `${booking.eventTitleSnapshot} ${action}`,
     payload: { recoveryTokenId: id, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
-    idempotencyKey: `email:booking:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion });
+    idempotencyKey: `email:booking:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion,
+    nextAttemptAt: booking.calendarProviderSnapshot === "google" ? new Date(now.getTime() + GOOGLE_INVITE_FALLBACK_MS) : undefined });
   const host = await tx.user.findUnique({ where: { id: booking.hostId }, select: { email: true, timeZone: true } });
   if (host) {
     const organizerAction = kind === "BOOKING_CANCELLED" ? "Booking canceled" : kind === "BOOKING_RESCHEDULED" ? "Booking rescheduled" : "New booking";
@@ -76,7 +81,29 @@ export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmail
   }
 }
 
-function appBaseUrl() {
+export function bookingReminderLeadMs() {
+  const hours = Number(process.env.BOOKING_REMINDER_LEAD_HOURS || "24");
+  return (Number.isFinite(hours) && hours >= 1 && hours <= 168 ? hours : 24) * 60 * 60_000;
+}
+// Scheduled delivery rides the existing claim query: a future nextAttemptAt is simply not picked up until due.
+export async function enqueueBookingReminder(tx: Transaction, booking: BookingEmailSnapshot, now = new Date()) {
+  const sendAt = new Date(booking.startAt.getTime() - bookingReminderLeadMs());
+  // Under one hour of lead the confirmation email IS the reminder; enqueueing would fire it immediately after.
+  if (sendAt.getTime() <= now.getTime() + 60 * 60_000) return;
+  const id = randomBytes(18).toString("base64url"); const binding = bookingTokenBinding(booking.workspaceId, booking.id, booking.inviteeEmail.toLowerCase());
+  const authority = createActionToken("BOOKING_RECOVERY", binding, id);
+  const expiresAt = new Date(Math.max(now.getTime() + 7 * 24 * 60 * 60_000, booking.endAt.getTime() + 30 * 24 * 60 * 60_000));
+  await tx.bookingRecoveryToken.create({ data: { id, workspaceId: booking.workspaceId, bookingId: booking.id, email: booking.inviteeEmail.toLowerCase(), tokenHash: authority.tokenHash, expiresAt } });
+  await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind: "BOOKING_REMINDER", recipientEmail: booking.inviteeEmail, subject: `Reminder: ${booking.eventTitleSnapshot}`,
+    payload: { recoveryTokenId: id, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
+    idempotencyKey: `email:booking:REMINDER:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion, nextAttemptAt: sendAt });
+}
+// Called inside the cancel and reschedule transactions so a client who cancels is never reminded to attend.
+export async function supersedeBookingReminders(tx: Transaction, bookingId: string, now = new Date()) {
+  await tx.emailOutbox.updateMany({ where: { bookingId, kind: "BOOKING_REMINDER", status: { in: ["PENDING", "RETRY"] } }, data: { status: "SUPERSEDED", completedAt: now, leaseToken: null, leaseExpiresAt: null, lastErrorCode: "REMINDER_SUPERSEDED" } });
+}
+
+export function appBaseUrl() {
   const value = process.env.NEXT_PUBLIC_APP_URL || (process.env.NODE_ENV !== "production" ? "http://localhost:3000" : "");
   const url = new URL(value); if (process.env.NODE_ENV === "production" && url.protocol !== "https:") throw new Error("Production email links require canonical HTTPS NEXT_PUBLIC_APP_URL.");
   return url.origin;
@@ -113,6 +140,11 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
   const binding = bookingTokenBinding(recovery.workspaceId, recovery.bookingId, recovery.email); const token = materializeActionToken(recovery.id, "BOOKING_RECOVERY", binding);
   if (!tokenHashMatches(actionTokenHash(token, "BOOKING_RECOVERY", binding), recovery.tokenHash)) return null;
   if (row.kind === "BOOKING_RECOVERY") return { subject: row.subjectSnapshot, text: `Manage your booking: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
+  if (row.kind === "BOOKING_REMINDER") {
+    const booking = await db.booking.findFirst({ where: { id: recovery.bookingId, workspaceId: row.workspaceId }, select: { status: true } });
+    if (booking?.status !== "CONFIRMED") return null;
+    return { subject: row.subjectSnapshot, text: `Reminder: ${String(payload.eventTitle)} is coming up. ${bookingTime(String(payload.startAt), String(payload.timeZone))}. Need to change or cancel? Manage: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
+  }
   const action = row.kind === "BOOKING_CANCELLED" ? "cancelled" : row.kind === "BOOKING_RESCHEDULED" ? "rescheduled" : "confirmed";
   return { subject: row.subjectSnapshot, text: `${String(payload.eventTitle)} is ${action}. ${bookingTime(String(payload.startAt), String(payload.timeZone))}. ${money(Number(payload.priceCents), String(payload.currency))}. Payment: ${String(payload.paymentTruth)}. Manage: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
 }

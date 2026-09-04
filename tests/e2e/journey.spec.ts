@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { assertNoClientSecretState, assertNoHorizontalOverflow, attachSession, baseURL, createManagedBooking, db, latestAccountToken, latestBookingRecoveryToken, latestInvitationToken, login, organizerEmail, organizerPassword, untracedJson } from "./helpers";
+import { assertNoClientSecretState, assertNoHorizontalOverflow, baseURL, createManagedBooking, createOrganizerAccount, db, latestAccountToken, latestBookingRecoveryToken, login, organizerEmail, organizerPassword, passClientGate, untracedJson } from "./helpers";
 
 // This journey handles one-time authorities. Tracing is deliberately disabled so a
 // failure artifact can never contain a request or response carrying an authority.
@@ -15,24 +15,16 @@ async function waitForCalendarSync(bookingId: string) {
   throw new Error("The booking calendar update did not settle within the bounded wait.");
 }
 
-test("@journey signup, verification, onboarding, scheduling, recovery and tenant isolation", async ({ page, context }, testInfo) => {
+test("@journey verification, onboarding, scheduling, recovery and tenant isolation", async ({ page, context }, testInfo) => {
   const suffix = testInfo.project.name.replaceAll(/[^a-z0-9]/gi, "-").toLowerCase();
-  const accountEmail = `account-${suffix}@example.com`;
   const accountPassword = process.env.PLAYWRIGHT_ACCOUNT_PASSWORD!;
   const replacementPassword = process.env.PLAYWRIGHT_REPLACEMENT_PASSWORD!;
+  const account = await createOrganizerAccount(`account-${suffix}`, accountPassword, { verified: false });
 
-  await page.goto("/signup");
-  await page.getByLabel("Your name").fill(`Account ${suffix}`);
-  await page.getByLabel("Email address").fill(accountEmail);
-  await page.getByLabel("Workspace name").fill(`Workspace ${suffix}`);
-  await page.getByLabel("Workspace timezone").selectOption("America/Chicago");
-  await page.getByLabel("Password").fill(accountPassword);
-  await page.getByRole("button", { name: "Create workspace" }).click();
-  await expect(page.getByRole("heading", { name: "Check for verification instructions" })).toBeVisible();
-
-  const verification = await latestAccountToken(accountEmail, "EMAIL_VERIFY");
+  await untracedJson("/api/auth/verify-email/request", { method: "POST", body: JSON.stringify({ email: account.email }) });
+  const verification = await latestAccountToken(account.email, "EMAIL_VERIFY");
   await untracedJson("/api/auth/verify-email/consume", { method: "POST", body: JSON.stringify({ token: verification }) });
-  await login(page, accountEmail, accountPassword);
+  await login(page, account.email, accountPassword);
   await expect(page).toHaveURL(/\/onboarding$/);
   await page.getByRole("button", { name: "Open dashboard" }).click();
   await expect(page.getByRole("heading", { name: "Scheduling overview" })).toBeVisible();
@@ -46,17 +38,18 @@ test("@journey signup, verification, onboarding, scheduling, recovery and tenant
   await expect(page.getByRole("status")).toContainText("Changes saved");
 
   await page.goto("/forgot-password");
-  await page.getByLabel("Email address").fill(accountEmail);
+  await page.getByLabel("Email address").fill(account.email);
   await page.getByRole("button", { name: "Request reset instructions" }).click();
   await expect(page.getByRole("status")).toContainText("Request accepted");
-  const reset = await latestAccountToken(accountEmail, "PASSWORD_RESET");
+  const reset = await latestAccountToken(account.email, "PASSWORD_RESET");
   await untracedJson("/api/auth/password-reset/consume", { method: "POST", body: JSON.stringify({ token: reset, newPassword: replacementPassword }) });
   await context.clearCookies();
-  await login(page, accountEmail, replacementPassword);
+  await login(page, account.email, replacementPassword);
 
   // Traverse the real public UI once per browser project. The later managed
   // booking exercises the API race/recovery surface with its returned cookie.
   await context.clearCookies();
+  await passClientGate(context);
   await page.goto("/book/strategy-call");
   await expect(page.locator(".time-grid button").first()).toBeVisible();
   await page.locator(".time-grid button").first().click();
@@ -87,21 +80,14 @@ test("@journey signup, verification, onboarding, scheduling, recovery and tenant
   const cancelled = await untracedJson(`/api/bookings/${managed.id}`, { method: "DELETE", headers: { Cookie: managed.cookie }, body: JSON.stringify({ reason: "E2E cancellation" }) });
   expect((await cancelled.json() as { data: { status: string } }).data.status).toBe("CANCELLED");
 
-  await page.goto("/settings");
-  await page.getByLabel("Invitee email").fill(accountEmail);
-  await page.getByLabel("Workspace role").selectOption("MEMBER");
-  await page.getByRole("button", { name: "Send invitation" }).click();
-  await expect(page.getByRole("status")).toContainText("Invitation created");
-  const invitation = await latestInvitationToken(accountEmail);
-  const inviteeCookie = await attachSession(context, accountEmail, replacementPassword);
-  await untracedJson("/api/workspace/invitations/accept", { method: "POST", headers: { Cookie: inviteeCookie }, body: JSON.stringify({ token: invitation }) });
-
-  const accountResponse = await fetch(`${baseURL}/api/account`, { headers: { Cookie: inviteeCookie } });
-  const accountBody = await accountResponse.json() as { data: { workspaces: Array<{ id: string }> } };
-  expect(accountBody.data.workspaces).toHaveLength(2);
-  const ownWorkspace = await db.workspace.findFirstOrThrow({ where: { memberships: { some: { user: { email: accountEmail } } }, name: `Workspace ${suffix}` } });
-  const foreignEventCount = await db.eventType.count({ where: { workspaceId: ownWorkspace.id, slug: "strategy-call" } });
+  // Tenant isolation: the fresh workspace never sees the seeded workspace's event
+  // types, and the registration and invitation surfaces no longer exist at all.
+  const foreignEventCount = await db.eventType.count({ where: { workspaceId: account.workspaceId, slug: "strategy-call" } });
   expect(foreignEventCount).toBe(0);
+  for (const [path, method] of [["/api/auth/register", "POST"], ["/api/workspace/invitations", "GET"], ["/api/workspace/members", "GET"], ["/api/workspace/switch", "POST"], ["/api/webhooks/stripe", "POST"]] as const) {
+    const response = await fetch(`${baseURL}${path}`, { method, headers: { "content-type": "application/json" }, body: method === "GET" ? undefined : "{}" });
+    expect(response.status, `${path} must be removed`).toBe(404);
+  }
 
   await context.clearCookies(); await login(page, organizerEmail, organizerPassword);
   await page.goto("/integrations");

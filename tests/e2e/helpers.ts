@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes, scryptSync } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
 
@@ -35,12 +35,15 @@ export async function latestAccountToken(email: string, purpose: "EMAIL_VERIFY" 
   return actionToken(purpose, row.id, `${row.workspaceId}\0${row.userId}\0${row.email}`);
 }
 
-export async function latestInvitationToken(email: string) {
-  const row = await waitForAuthority(
-    () => db.workspaceInvitation.findFirst({ where: { email: email.toLowerCase(), status: "PENDING" }, orderBy: { createdAt: "desc" } }),
-    "workspace invitation authority",
-  );
-  return actionToken("WORKSPACE_INVITATION", row.id, `${row.workspaceId}\0${row.email}\0${row.role}\0${row.tokenVersion}`);
+// Registration routes are removed by design (single-admin deployment), so E2E accounts
+// are provisioned directly in the database, matching the operator's seed path.
+export async function createOrganizerAccount(label: string, password: string, { verified = true }: { verified?: boolean } = {}) {
+  const email = `${label}@example.com`.toLowerCase();
+  const salt = randomBytes(16);
+  const workspace = await db.workspace.create({ data: { name: `Workspace ${label}`, timeZone: "America/Chicago" } });
+  const user = await db.user.create({ data: { email, name: `Account ${label}`, passwordHash: `scrypt:v1:${salt.toString("base64url")}:${scryptSync(password, salt, 32).toString("base64url")}`, emailVerifiedAt: verified ? new Date() : null } });
+  await db.membership.create({ data: { workspaceId: workspace.id, userId: user.id, role: "OWNER", status: "ACTIVE" } });
+  return { email, userId: user.id, workspaceId: workspace.id };
 }
 
 export async function latestBookingRecoveryToken(bookingId: string) {
@@ -59,6 +62,23 @@ export async function untracedJson(path: string, init: RequestInit = {}) {
     throw new Error(`Untraced test transition failed with status ${response.status} (${safe.error?.code || "UNKNOWN"}; fields=${fields}; message=${safe.error?.message || "none"}).`);
   }
   return response;
+}
+
+let clientGateCookie: string | undefined;
+export async function clientGatePair() {
+  if (!clientGateCookie) {
+    const response = await untracedJson("/api/gate", { method: "POST", body: JSON.stringify({ password: process.env.PLAYWRIGHT_CLIENT_GATE_PASSWORD! }) });
+    const cookie = response.headers.get("set-cookie");
+    if (!cookie) throw new Error("Client gate cookie was not issued.");
+    clientGateCookie = cookie.split(";", 1)[0]!;
+  }
+  return clientGateCookie;
+}
+
+export async function passClientGate(context: BrowserContext) {
+  const pair = await clientGatePair(); const separator = pair.indexOf("=");
+  await context.addCookies([{ name: pair.slice(0, separator), value: pair.slice(separator + 1), url: baseURL, httpOnly: true, sameSite: "Lax" }]);
+  return pair;
 }
 
 export async function login(page: Page, email = organizerEmail, password = organizerPassword) {
@@ -97,11 +117,12 @@ async function attachSetCookie(context: BrowserContext, cookie: string) {
 }
 
 export async function createManagedBooking(context: BrowserContext, label: string) {
-  const eventResponse = await fetch(`${baseURL}/api/public/strategy-call`); const eventBody = await eventResponse.json() as { data: { durations: Array<{ id: string }> } }; const durationId = eventBody.data.durations[0]!.id;
+  const gateCookie = await clientGatePair();
+  const eventResponse = await fetch(`${baseURL}/api/public/strategy-call`, { headers: { Cookie: gateCookie } }); const eventBody = await eventResponse.json() as { data: { durations: Array<{ id: string }> } }; const durationId = eventBody.data.durations[0]!.id;
   const from = new Date(); const to = new Date(from.getTime() + 21 * 86_400_000);
-  const slotsResponse = await fetch(`${baseURL}/api/public/strategy-call/slots?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}&timeZone=${encodeURIComponent("America/Chicago")}&durationId=${encodeURIComponent(durationId)}`);
+  const slotsResponse = await fetch(`${baseURL}/api/public/strategy-call/slots?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}&timeZone=${encodeURIComponent("America/Chicago")}&durationId=${encodeURIComponent(durationId)}`, { headers: { Cookie: gateCookie } });
   const slotsBody = await slotsResponse.json() as { data: Array<{ start: string }> }; const slot = slotsBody.data[0]; if (!slot) throw new Error("No deterministic E2E slot was available.");
-  const bookingResponse = await untracedJson("/api/public/strategy-call/bookings", { method: "POST", headers: { "idempotency-key": `e2e-booking-${label}` }, body: JSON.stringify({ startAt: slot.start, inviteeName: `Invitee ${label}`, inviteeEmail: `invitee-${label}@example.com`, inviteeTimeZone: "America/Chicago", durationId }) });
+  const bookingResponse = await untracedJson("/api/public/strategy-call/bookings", { method: "POST", headers: { "idempotency-key": `e2e-booking-${label}`, Cookie: gateCookie }, body: JSON.stringify({ startAt: slot.start, inviteeName: `Invitee ${label}`, inviteeEmail: `invitee-${label}@example.com`, inviteeTimeZone: "America/Chicago", durationId }) });
   const result = (await bookingResponse.json() as { data: { bookingId: string; manageSessionEstablished: boolean; manageCapabilities: null } }).data;
   if (!result.manageSessionEstablished || result.manageCapabilities !== null) throw new Error("Public booking did not establish the server-side manage session contract.");
   const setCookie = bookingResponse.headers.get("set-cookie"); if (!setCookie) throw new Error("Manage session cookie was not issued.");

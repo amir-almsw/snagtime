@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BookingSlot, CreateBookingInput, WorkspaceBranding } from "@/lib/contracts";
+import { SnagTimeApiError } from "@/lib/api-client";
 import type { DurationOption, EventType } from "./demo-data";
 import { frontendApi } from "./api-adapter";
 import { clearTerminalBookingAttempt, getBookingAttempt, rememberBookingAttempt } from "./booking-attempt";
@@ -20,6 +21,13 @@ const fallbackTimeZones = ["UTC", "America/Chicago", "America/New_York", "Americ
 const supportedTimeZones = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : fallbackTimeZones;
 const timeZones = ["UTC", ...supportedTimeZones.filter((zone) => zone !== "UTC")];
 const publicEventRequests = new Map<string, Promise<EventType>>();
+
+// A gate cookie that expires mid-flow surfaces as a 401 from any public API call; return to the gate with the way back.
+function redirectedToGate(reason: unknown, navigate: (path: string) => void) {
+  if (!(reason instanceof SnagTimeApiError) || reason.code !== "CLIENT_GATE_REQUIRED" || typeof window === "undefined") return false;
+  navigate(`/gate?next=${encodeURIComponent(window.location.pathname)}`);
+  return true;
+}
 
 function loadPublicEvent(slug: string) {
   const existing = publicEventRequests.get(slug);
@@ -111,9 +119,9 @@ export function PublicBookingFlow({ slug }: { slug: string }) {
       setEvent(item);
       setLoadingSlots(true);
       setDuration(item.durations.find((option) => option.isDefault) ?? item.durations[0] ?? null);
-    }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "This booking page is unavailable."); }).finally(() => { if (active) setLoadingEvent(false); });
+    }).catch((reason) => { if (active && !redirectedToGate(reason, router.push)) setError(reason instanceof Error ? reason.message : "This booking page is unavailable."); }).finally(() => { if (active) setLoadingEvent(false); });
     return () => { active = false; };
-  }, [slug]);
+  }, [router.push, slug]);
 
   useEffect(() => {
     if (!event || !duration) return;
@@ -121,10 +129,10 @@ export function PublicBookingFlow({ slug }: { slug: string }) {
     const controller = new AbortController();
     loadBookingWindowSlots(slug, event.bookingWindowDays, timezone, duration.id, controller.signal)
       .then((items) => { if (!active) return; setError(""); setSlots(items); const first = items.find((slot) => !duration.id || slot.durationId === duration.id); setSelectedDate(first ? dateKey(first.start, slotFormatters.key) : ""); setSelectedStart(""); setDayOffset(0); })
-      .catch((reason) => { if (!active || (reason instanceof DOMException && reason.name === "AbortError")) return; setSlots([]); setError(reason instanceof Error ? reason.message : "Could not load available times."); })
+      .catch((reason) => { if (!active || (reason instanceof DOMException && reason.name === "AbortError") || redirectedToGate(reason, router.push)) return; setSlots([]); setError(reason instanceof Error ? reason.message : "Could not load available times."); })
       .finally(() => { if (active) setLoadingSlots(false); });
     return () => { active = false; controller.abort(); };
-  }, [duration, event, slug, slotFormatters, slotRefreshVersion, timezone]);
+  }, [duration, event, router.push, slug, slotFormatters, slotRefreshVersion, timezone]);
 
   const slotViews = useMemo(() => slots.map((slot) => slotView(slot, slotFormatters)), [slotFormatters, slots]);
   const days = useMemo(() => {
@@ -200,6 +208,7 @@ export function PublicBookingFlow({ slug }: { slug: string }) {
       clearTerminalBookingAttempt(slug);
       router.push(`/book/${slug}/confirmation?booking=${encodeURIComponent(result.bookingId)}`);
     } catch (reason) {
+      if (redirectedToGate(reason, router.push)) return;
       const message = reason instanceof Error ? reason.message : "That time is no longer available. Please choose another.";
       if (/no longer available|just booked|slot.*unavailable/i.test(message)) {
         setSelectedStart("");

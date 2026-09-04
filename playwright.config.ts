@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { randomBytes } from "node:crypto";
+import { randomBytes, scryptSync } from "node:crypto";
 import { resolve } from "node:path";
 
 const port = Number(process.env.PLAYWRIGHT_PORT || 3210);
@@ -21,6 +21,12 @@ process.env.EMAIL_TOKEN_SECRET ||= randomBytes(32).toString("base64url");
 process.env.TOKEN_ENCRYPTION_KEY ||= randomBytes(32).toString("hex");
 process.env.TRUST_PROXY = "true";
 process.env.PROXY_SHARED_SECRET ||= randomBytes(32).toString("base64url");
+process.env.PLAYWRIGHT_CLIENT_GATE_PASSWORD ||= `Gate!7${randomBytes(18).toString("base64url")}`;
+if (!process.env.CLIENT_GATE_PASSWORD_HASH) {
+  const gateSalt = randomBytes(16);
+  process.env.CLIENT_GATE_PASSWORD_HASH = `scrypt:v1:${gateSalt.toString("base64url")}:${scryptSync(process.env.PLAYWRIGHT_CLIENT_GATE_PASSWORD, gateSalt, 32).toString("base64url")}`;
+}
+process.env.CLIENT_GATE_SECRET ||= randomBytes(32).toString("base64url");
 
 function ingressHeaders(address: string) {
   return { Origin: baseURL, "x-tempocove-proxy-secret": process.env.PROXY_SHARED_SECRET!, "x-forwarded-for": address };

@@ -5,8 +5,15 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { db } from "@/server/db";
+import { eventTypeInput } from "@/server/validation";
 
 describe("payment and booking authority migration guards", () => {
+  it("rejects any non-zero price at the validation boundary so a paid event type cannot exist", () => {
+    const base = { name: "Sharp fade", slug: "sharp-fade", durationMinutes: 30, color: "#2563eb", locationType: "IN_PERSON" as const, locationValue: "The shop", isActive: true, bufferBeforeMinutes: 0, bufferAfterMinutes: 0, minimumNoticeMinutes: 0, bookingWindowDays: 30, priceCents: 0, currency: "usd" };
+    expect(eventTypeInput.safeParse(base).success).toBe(true);
+    expect(eventTypeInput.safeParse({ ...base, priceCents: 500 }).success).toBe(false);
+    expect(eventTypeInput.safeParse({ ...base, durations: [{ label: "30 min", durationMinutes: 30, isDefault: true, priceCents: 500, currency: "usd", position: 0 }] }).success).toBe(false);
+  });
   it("binds a booking host to the exact EventType owner and blocks booked owner transfer", async () => {
     const event = await db.eventType.findFirstOrThrow({ include: { durations: true } });
     const duration = event.durations[0]!;

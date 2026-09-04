@@ -19,12 +19,13 @@ const eventTypeObject = z.object({
   bufferAfterMinutes: z.number().int().min(0).max(240),
   minimumNoticeMinutes: z.number().int().min(0).max(10080),
   bookingWindowDays: z.number().int().min(1).max(365),
-  priceCents: z.number().int().min(0).max(10_000_000),
+  // Paid event types are disabled for this deployment: the price columns stay, but only zero passes validation.
+  priceCents: z.number().int().min(0).max(0, "Paid event types are disabled."),
   currency: z.string().trim().toLowerCase().regex(/^[a-z]{3}$/),
   durations: z.array(z.object({
     id: z.string().min(1).max(100).optional(),
     label: z.string().trim().min(1).max(60), durationMinutes: z.number().int().min(10).max(480),
-    isDefault: z.boolean(), priceCents: z.number().int().min(0).max(10_000_000),
+    isDefault: z.boolean(), priceCents: z.number().int().min(0).max(0, "Paid event types are disabled."),
     currency: z.string().trim().toLowerCase().regex(/^[a-z]{3}$/), position: z.number().int().min(0).max(100),
   })).min(1).max(12).optional(),
   questions: z.array(z.object({
@@ -91,6 +92,7 @@ export const bookingInput = z.object({
 });
 
 export const demoLoginInput = z.object({ email: z.email().transform((value) => value.toLowerCase()), password: z.string().min(1).max(200) });
+export const clientGateInput = z.object({ password: z.string().min(1).max(200) }).strict();
 const strongPassword = z.string().min(12).max(200).refine((value) => /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value) && /[^A-Za-z0-9]/.test(value), "Use upper, lower, number, and symbol.");
 export const registrationInput = z.object({
   name: z.string().trim().min(2).max(100), email: z.email().transform((value) => value.trim().toLowerCase()),

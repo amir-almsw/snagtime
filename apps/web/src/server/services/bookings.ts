@@ -12,7 +12,7 @@ import { currentDatabaseContext, enterDatabaseAction, enterDatabaseContext, ente
 import { processBookingOutbox } from "@/server/services/outbox";
 import { shouldDrainOutboxInline } from "@/server/services/outbox-dispatch";
 import { getPaymentService, type PaymentService } from "@/server/services/payments";
-import { enqueueBookingEmail } from "@/server/services/notifications";
+import { enqueueBookingEmail, enqueueBookingReminder, supersedeBookingReminders } from "@/server/services/notifications";
 import { boundedPrismaTransactionOptions, withDatabaseTransactionRetry } from "@/server/database-retry";
 
 const activeStatuses = ["CONFIRMED", "PENDING_PAYMENT"];
@@ -178,6 +178,7 @@ export async function createBooking(
       if (!duration.priceCents) {
         await tx.integrationOutbox.create({ data: { workspaceId: eventType.workspaceId, bookingId: booking.id, kind: "CALENDAR_CREATE", idempotencyKey: `calendar:create:${booking.id}:free` } });
         await enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED");
+        await enqueueBookingReminder(tx, booking);
       }
       return tx.booking.findUniqueOrThrow({ where: { id: booking.id }, include: bookingInclude });
     }, boundedPrismaTransactionOptions(remainingMs)));
@@ -237,6 +238,7 @@ export async function cancelBooking(id: string, cancellationReason?: string) {
       await tx.integrationOutbox.upsert({ where: { idempotencyKey: `stripe:refund:${id}:full:v1` }, update: {}, create: { workspaceId: result.workspaceId, bookingId: id, kind: "STRIPE_REFUND", idempotencyKey: `stripe:refund:${id}:full:v1` } });
     } else if (result.stripeCheckoutSessionId) await tx.integrationOutbox.upsert({ where: { idempotencyKey: `stripe:expire:${id}` }, update: {}, create: { workspaceId: result.workspaceId, bookingId: id, kind: "STRIPE_EXPIRE", idempotencyKey: `stripe:expire:${id}` } });
     const finalResult = await tx.booking.findUniqueOrThrow({ where: { id }, include: bookingInclude });
+    await supersedeBookingReminders(tx, id, mutationNow);
     await enqueueBookingEmail(tx, finalResult, "BOOKING_CANCELLED", mutationNow); return finalResult;
   });
   if (shouldDrainOutboxInline()) await processBookingOutbox(id);
@@ -270,7 +272,9 @@ export async function rescheduleBooking(id: string, startAt: string, calendar: C
       await tx.bookingManageSession.updateMany({ where: { bookingId: id, revokedAt: null }, data: { expiresAt: renewedManageExpiry } });
       await tx.integrationOutbox.create({ data: { workspaceId: booking.workspaceId, bookingId: id, kind: "CALENDAR_UPDATE", bookingMutationVersion: booking.mutationVersion + 1, idempotencyKey: `calendar:update:${id}:${requestedStart.toISOString()}` } });
       const result = await tx.booking.findUniqueOrThrow({ where: { id }, include: bookingInclude });
-      await enqueueBookingEmail(tx, result, "BOOKING_RESCHEDULED", mutationNow); return result;
+      await supersedeBookingReminders(tx, id, mutationNow);
+      await enqueueBookingEmail(tx, result, "BOOKING_RESCHEDULED", mutationNow);
+      await enqueueBookingReminder(tx, result, mutationNow); return result;
     });
   } catch (error) {
     if (providerErrorCode(error) === "P2002") throw conflict("That time was just booked. Choose another slot.");

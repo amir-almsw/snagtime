@@ -2,10 +2,12 @@ import { AppError } from "@/server/errors";
 import { apiError, ok } from "@/server/http";
 import { listPublicSlots } from "@/server/services/bookings";
 import { clientAddress, enforceRateLimit } from "@/server/rate-limit";
+import { requireClientGate } from "@/server/auth/client-gate";
 
 type Context = { params: Promise<{ slug: string }> };
 export async function GET(request: Request, context: Context) {
   try {
+    requireClientGate(request);
     const { slug } = await context.params;
     await enforceRateLimit(`public-slots:${clientAddress(request)}`, 120, 60_000);
     const query = new URL(request.url).searchParams;
