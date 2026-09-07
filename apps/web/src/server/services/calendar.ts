@@ -290,7 +290,7 @@ export class GoogleCalendarService implements CalendarService {
 export function providerCalendarEventId(bookingId: string) { return `tc${createHash("sha256").update(bookingId).digest("hex").slice(0, 40)}`; }
 // With Google's invitation acting as the client's confirmation, the event body must carry everything the
 // suppressed email would have: the custom answers for the organizer's phone, the client's only manage link,
-// and the warning that an RSVP decline is not a cancellation (nothing reconciles a "No" back into SnagTime).
+// and the warning that an RSVP decline is not a cancellation (nothing reconciles a "No" back into the app).
 export async function bookingEventDescription(booking: CalendarBooking, now = new Date()) {
   const lines: string[] = [];
   if (booking.notes) lines.push(booking.notes);
@@ -523,7 +523,7 @@ export async function disconnectGoogleCalendar(userId: string, revoke: (token: s
     return { id: fenced.id, credentialUserId: fenced.userId, token: decryptToken(fenced.refreshToken) || decryptToken(fenced.accessToken), leaseToken };
   });
   if (!claimed) {
-    if (environmentGoogleCredentialAllowed(resolvedWorkspaceId)) throw new AppError("ENV_CREDENTIAL_MANAGED_EXTERNALLY", "The environment-provided Google credential must be revoked outside SnagTime.", 409);
+    if (environmentGoogleCredentialAllowed(resolvedWorkspaceId)) throw new AppError("ENV_CREDENTIAL_MANAGED_EXTERNALLY", "The environment-provided Google credential must be revoked outside this app.", 409);
     return { disconnected: true as const };
   }
   clearGoogleScopeHealthCache(resolvedWorkspaceId);

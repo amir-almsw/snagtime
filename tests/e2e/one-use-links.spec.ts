@@ -82,7 +82,7 @@ test("one-use email and booking links use fragments, clean before consume, rejec
   await assertAuthorityClean(page, recovery, recoveryRequests.urls);
   await page.context().clearCookies();
   await page.goto(`/manage/${booking.id}/reschedule#recovery=${encodeURIComponent(recovery)}`);
-  await expect(page.getByRole("heading", { name: "Booking unavailable" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "We couldn’t open this appointment" })).toBeVisible();
   await assertAuthorityClean(page, recovery, []);
 
   expect(consoleMessages.some((message) => [verification, legacyVerification, reset, recovery].some((authority) => message.includes(authority)))).toBe(false);

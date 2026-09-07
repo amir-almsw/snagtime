@@ -15,7 +15,7 @@ const clockMinutes = (value: string) => { const [hours = 0, minutes = 0] = value
 export function AvailabilityEditor() {
   const { canManage } = useWorkspaceAccess();
   const [days, setDays] = useState<AvailabilityDay[]>([]);
-  const [timeZone, setTimeZone] = useState("America/Chicago");
+  const [timeZone, setTimeZone] = useState("Europe/Amsterdam");
   const [overrides, setOverrides] = useState<AvailabilityOverride[]>([]);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -68,7 +68,7 @@ export function AvailabilityEditor() {
   const conflictingDates = new Set([...dateCounts].filter(([, count]) => count > 1).map(([date]) => date));
   const nextUnusedDate = () => { const date = new Date(`${nextDate()}T12:00:00Z`); while (overrides.some((item) => item.dateKey === date.toISOString().slice(0, 10))) date.setUTCDate(date.getUTCDate() + 1); return date.toISOString().slice(0, 10); };
 
-  if (!canManage) return <div className="page-stack"><PageHeader title="Availability" /><section className="panel error-state" role="alert"><span><Icon name="x" /></span><h2>Organizer access required</h2><p>Your workspace role cannot change availability.</p></section></div>;
+  if (!canManage) return <div className="page-stack"><PageHeader title="Availability" /><section className="panel error-state" role="alert"><span><Icon name="x" /></span><h2>Studio access required</h2><p>Your workspace role cannot change availability.</p></section></div>;
   if (loadState === "loading") return <div className="page-stack"><PageHeader eyebrow="Schedule · Working hours" title="Availability" description="Define when people can book you. Event rules and calendar conflicts are applied on top." /><div className="sync-note" role="status"><span className="spinner" />Loading availability…</div></div>;
   if (loadState === "error") return <div className="page-stack"><PageHeader eyebrow="Schedule · Working hours" title="Availability" description="Define when people can book you. Event rules and calendar conflicts are applied on top." /><section className="panel error-state" role="alert"><span><Icon name="x" /></span><h2>Availability did not load</h2><p>{error || "Could not load availability."}</p><ActionButton variant="primary" onClick={retryLoad}>Retry</ActionButton></section></div>;
 
@@ -90,7 +90,7 @@ export function AvailabilityEditor() {
       </section>
       <aside className="availability-aside">
         <section className="panel compact-panel"><SectionHeader title="Calendar preview" /><div className="mini-week"><div className="mini-week-head">{days.map((day) => <span key={day.short}>{day.short[0]}</span>)}</div><div className="mini-week-grid">{days.map((day) => <div key={day.short} className={day.enabled ? "has-hours" : ""}>{day.enabled && <span style={{ height: `${Math.max(28, day.windows.length * 24)}px` }} />}</div>)}</div></div><p className="aside-note"><span className="legend-dot" />Your bookable hours before event rules and connected calendar conflicts.</p></section>
-        <section className="panel compact-panel"><SectionHeader title="Schedule rules" /><Field label="Timezone"><select value={timeZone} onChange={(event) => patchTimeZone(event.target.value)}>{[...new Set([timeZone, "America/Chicago", "America/New_York", "America/Los_Angeles", "Europe/London", "UTC"])].map((zone) => <option value={zone} key={zone}>{zone}</option>)}</select></Field><p className="aside-note">Invitees choose their own display timezone on the public booking page.</p></section>
+        <section className="panel compact-panel"><SectionHeader title="Schedule rules" /><Field label="Timezone"><select value={timeZone} onChange={(event) => patchTimeZone(event.target.value)}>{[...new Set([timeZone, "Europe/Amsterdam", "Europe/London", "Europe/Berlin", "Europe/Paris", "UTC"])].map((zone) => <option value={zone} key={zone}>{zone}</option>)}</select></Field><p className="aside-note">Clients choose their own display timezone on the public booking page.</p></section>
       </aside>
     </div>
     <div className="two-panel-grid">

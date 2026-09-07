@@ -26,7 +26,7 @@ function GenericRequestForm({ kind }: { kind: "password" | "verification" }) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "The request could not be accepted."); }
     finally { setWorking(false); }
   };
-  if (accepted) return <div className="recovery-result" role="status" aria-live="polite"><strong>Request accepted</strong><p>If the address is eligible, SnagTime will make instructions available through its configured email provider. This page does not confirm an account or delivery.</p><Link className="button button-primary" href="/dashboard">Return to sign in</Link></div>;
+  if (accepted) return <div className="recovery-result" role="status" aria-live="polite"><strong>Request accepted</strong><p>If that address is on file, instructions are on their way. For your privacy, this page doesn’t confirm whether an account exists.</p><Link className="button button-primary" href="/dashboard">Return to sign in</Link></div>;
   return <form onSubmit={submit}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label>{error && <div className="form-error" role="alert" aria-live="assertive">{error}</div>}<button className="button button-primary" type="submit" disabled={working || !email.includes("@")}>{working ? "Submitting…" : kind === "password" ? "Request reset instructions" : "Request verification instructions"}</button></form>;
 }
 

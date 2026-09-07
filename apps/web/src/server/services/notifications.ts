@@ -50,7 +50,7 @@ export async function enqueueEmail(tx: Transaction, input: EnqueueEmail) {
 }
 
 type BookingEmailSnapshot = { id: string; workspaceId: string; hostId: string; inviteeName: string; inviteeEmail: string; inviteeTimeZone: string; eventTitleSnapshot: string; startAt: Date; endAt: Date; priceCents: number; currency: string; stripePaymentStatus: string | null; refundStatus?: string; mutationVersion: number; calendarProviderSnapshot?: string | null };
-// When Google Calendar carries the booking, its invitation IS the client's confirmation. The SnagTime
+// When Google Calendar carries the booking, its invitation IS the client's confirmation. The app’s own
 // copy is deferred rather than dropped: a successful provider notice supersedes it (outbox.ts), and a
 // provider failure lets it deliver as the fallback so a Google outage never leaves clients unnotified.
 export const GOOGLE_INVITE_FALLBACK_MS = 5 * 60_000;
@@ -59,7 +59,7 @@ function paymentTruth(booking: BookingEmailSnapshot) {
   if (booking.refundStatus === "REFUNDED") return "Refunded";
   if (booking.refundStatus === "REFUND_PENDING") return "Paid; refund pending";
   if (booking.refundStatus === "REFUND_FAILED") return "Paid; refund needs attention";
-  return booking.stripePaymentStatus === "paid" ? "Paid" : booking.stripePaymentStatus === "paid_after_cancel" ? "Paid; refund pending" : "Payment pending";
+  return booking.stripePaymentStatus === "paid" ? "Paid" : booking.stripePaymentStatus === "paid_after_cancel" ? "Paid; refund pending" : "Payable at the shop";
 }
 export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmailSnapshot, kind: "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED", now = new Date()) {
   await tx.bookingRecoveryToken.updateMany({ where: { bookingId: booking.id, consumedAt: null, revokedAt: null }, data: { revokedAt: now } });
@@ -67,14 +67,14 @@ export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmail
   const id = randomBytes(18).toString("base64url"); const binding = bookingTokenBinding(booking.workspaceId, booking.id, booking.inviteeEmail.toLowerCase());
   const authority = createActionToken("BOOKING_RECOVERY", binding, id);
   await tx.bookingRecoveryToken.create({ data: { id, workspaceId: booking.workspaceId, bookingId: booking.id, email: booking.inviteeEmail.toLowerCase(), tokenHash: authority.tokenHash, expiresAt } });
-  const action = kind === "BOOKING_CANCELLED" ? "cancelled" : kind === "BOOKING_RESCHEDULED" ? "rescheduled" : "confirmed";
-  await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: booking.inviteeEmail, subject: `${booking.eventTitleSnapshot} ${action}`,
+  const action = kind === "BOOKING_CANCELLED" ? "Your appointment is canceled" : kind === "BOOKING_RESCHEDULED" ? "Your appointment has moved" : "You’re booked";
+  await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: booking.inviteeEmail, subject: `${action}: ${booking.eventTitleSnapshot}`,
     payload: { recoveryTokenId: id, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
     idempotencyKey: `email:booking:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion,
     nextAttemptAt: booking.calendarProviderSnapshot === "google" ? new Date(now.getTime() + GOOGLE_INVITE_FALLBACK_MS) : undefined });
   const host = await tx.user.findUnique({ where: { id: booking.hostId }, select: { email: true, timeZone: true } });
   if (host) {
-    const organizerAction = kind === "BOOKING_CANCELLED" ? "Booking canceled" : kind === "BOOKING_RESCHEDULED" ? "Booking rescheduled" : "New booking";
+    const organizerAction = kind === "BOOKING_CANCELLED" ? "Appointment canceled" : kind === "BOOKING_RESCHEDULED" ? "Appointment moved" : "New appointment";
     await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: host.email, subject: `${organizerAction}: ${booking.eventTitleSnapshot}`,
       payload: { audience: "organizer", hostId: booking.hostId, inviteeName: booking.inviteeName, inviteeEmail: booking.inviteeEmail, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: host.timeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
       idempotencyKey: `email:booking:organizer:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion });
@@ -94,7 +94,7 @@ export async function enqueueBookingReminder(tx: Transaction, booking: BookingEm
   const authority = createActionToken("BOOKING_RECOVERY", binding, id);
   const expiresAt = new Date(Math.max(now.getTime() + 7 * 24 * 60 * 60_000, booking.endAt.getTime() + 30 * 24 * 60 * 60_000));
   await tx.bookingRecoveryToken.create({ data: { id, workspaceId: booking.workspaceId, bookingId: booking.id, email: booking.inviteeEmail.toLowerCase(), tokenHash: authority.tokenHash, expiresAt } });
-  await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind: "BOOKING_REMINDER", recipientEmail: booking.inviteeEmail, subject: `Reminder: ${booking.eventTitleSnapshot}`,
+  await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind: "BOOKING_REMINDER", recipientEmail: booking.inviteeEmail, subject: `See you soon: ${booking.eventTitleSnapshot}`,
     payload: { recoveryTokenId: id, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
     idempotencyKey: `email:booking:REMINDER:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion, nextAttemptAt: sendAt });
 }
@@ -109,6 +109,11 @@ export function appBaseUrl() {
   return url.origin;
 }
 function money(cents: number, currency: string) { return cents === 0 ? "Free" : new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(cents / 100); }
+// Prices are display-only, so a free service says nothing at all rather than "Free. Payment: none".
+function priceLine(payload: Record<string, unknown>) {
+  const cents = Number(payload.priceCents);
+  return cents > 0 ? ` ${money(cents, String(payload.currency))} — ${String(payload.paymentTruth).toLowerCase()}.` : "";
+}
 function bookingTime(startAt: string, timeZone: string) { return DateTime.fromISO(startAt).setZone(timeZone).toLocaleString(DateTime.DATETIME_FULL); }
 
 async function render(row: { kind: string; workspaceId: string; bookingId: string | null; recipientEmail: string; subjectSnapshot: string; payloadJson: string }, at = new Date()) {
@@ -119,7 +124,7 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
     const binding = accountTokenBinding(record.workspaceId, record.userId, record.email); const token = materializeActionToken(record.id, record.purpose, binding);
     if (!tokenHashMatches(actionTokenHash(token, record.purpose, binding), record.tokenHash)) return null;
     const path = row.kind === "EMAIL_VERIFY" ? "/verify-email" : "/reset-password";
-    return { subject: row.subjectSnapshot, text: `${row.kind === "EMAIL_VERIFY" ? "Verify your SnagTime email" : "Reset your SnagTime password"}: ${base}${path}#token=${encodeURIComponent(token)}` };
+    return { subject: row.subjectSnapshot, text: `${row.kind === "EMAIL_VERIFY" ? "Verify your Dvision Studio email" : "Reset your Dvision Studio password"}: ${base}${path}#token=${encodeURIComponent(token)}` };
   }
   if (row.kind === "WORKSPACE_INVITATION") {
     const invitation = await db.workspaceInvitation.findUnique({ where: { id: String(payload.invitationId) } });
@@ -132,21 +137,21 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
     if (!row.bookingId) return null;
     const booking = await db.booking.findFirst({ where: { id: row.bookingId, workspaceId: row.workspaceId, hostId: String(payload.hostId) }, select: { host: { select: { email: true } } } });
     if (!booking || booking.host.email.toLowerCase() !== row.recipientEmail.toLowerCase()) return null;
-    const action = row.kind === "BOOKING_CANCELLED" ? "canceled" : row.kind === "BOOKING_RESCHEDULED" ? "rescheduled" : "confirmed";
-    return { subject: row.subjectSnapshot, text: `${String(payload.inviteeName)} (${String(payload.inviteeEmail)}) ${action} ${String(payload.eventTitle)}. ${bookingTime(String(payload.startAt), String(payload.timeZone))}. ${money(Number(payload.priceCents), String(payload.currency))}. Payment: ${String(payload.paymentTruth)}. View booking: ${base}/bookings?selected=${encodeURIComponent(row.bookingId)}`, replyTo: String(payload.inviteeEmail) };
+    const action = row.kind === "BOOKING_CANCELLED" ? "canceled" : row.kind === "BOOKING_RESCHEDULED" ? "moved" : "booked";
+    return { subject: row.subjectSnapshot, text: `${String(payload.inviteeName)} (${String(payload.inviteeEmail)}) ${action} ${String(payload.eventTitle)}. ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Open in your dashboard: ${base}/bookings?selected=${encodeURIComponent(row.bookingId)}`, replyTo: String(payload.inviteeEmail) };
   }
   const recovery = await db.bookingRecoveryToken.findUnique({ where: { id: String(payload.recoveryTokenId) } });
   if (!recovery || recovery.workspaceId !== row.workspaceId || recovery.bookingId !== row.bookingId || recovery.email !== row.recipientEmail || recovery.consumedAt || recovery.revokedAt || recovery.expiresAt <= at) return null;
   const binding = bookingTokenBinding(recovery.workspaceId, recovery.bookingId, recovery.email); const token = materializeActionToken(recovery.id, "BOOKING_RECOVERY", binding);
   if (!tokenHashMatches(actionTokenHash(token, "BOOKING_RECOVERY", binding), recovery.tokenHash)) return null;
-  if (row.kind === "BOOKING_RECOVERY") return { subject: row.subjectSnapshot, text: `Manage your booking: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
+  if (row.kind === "BOOKING_RECOVERY") return { subject: row.subjectSnapshot, text: `Here is your link to reschedule or cancel your appointment: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
   if (row.kind === "BOOKING_REMINDER") {
     const booking = await db.booking.findFirst({ where: { id: recovery.bookingId, workspaceId: row.workspaceId }, select: { status: true } });
     if (booking?.status !== "CONFIRMED") return null;
-    return { subject: row.subjectSnapshot, text: `Reminder: ${String(payload.eventTitle)} is coming up. ${bookingTime(String(payload.startAt), String(payload.timeZone))}. Need to change or cancel? Manage: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
+    return { subject: row.subjectSnapshot, text: `A friendly reminder: your ${String(payload.eventTitle)} is coming up on ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Need to reschedule or cancel? ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
   }
-  const action = row.kind === "BOOKING_CANCELLED" ? "cancelled" : row.kind === "BOOKING_RESCHEDULED" ? "rescheduled" : "confirmed";
-  return { subject: row.subjectSnapshot, text: `${String(payload.eventTitle)} is ${action}. ${bookingTime(String(payload.startAt), String(payload.timeZone))}. ${money(Number(payload.priceCents), String(payload.currency))}. Payment: ${String(payload.paymentTruth)}. Manage: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
+  const opening = row.kind === "BOOKING_CANCELLED" ? `Your ${String(payload.eventTitle)} is canceled. It was booked for` : row.kind === "BOOKING_RESCHEDULED" ? `Your ${String(payload.eventTitle)} has moved. We will see you` : `You are booked in for ${String(payload.eventTitle)}. We will see you`;
+  return { subject: row.subjectSnapshot, text: `${opening} ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Reschedule or cancel any time: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
 }
 
 export class LocalInboxEmailProvider implements EmailProvider {

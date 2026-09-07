@@ -1,3 +1,3 @@
 import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
-export default function HomePage() { redirect(process.env.SURFACE === "book" ? "/gate" : "/dashboard"); }
+export default function HomePage() { redirect(process.env.SURFACE === "book" ? "/book" : "/dashboard"); }

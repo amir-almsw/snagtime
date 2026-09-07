@@ -75,7 +75,7 @@ test("@axe scans onboarding, authority outcomes, local inbox, confirmation and m
   const verification = await latestAccountToken(email, "EMAIL_VERIFY");
   await page.goto(`/verify-email#token=${encodeURIComponent(verification)}`); await expect(page).toHaveURL(`${baseURL}/verify-email`); await expect(page.getByRole("heading", { name: "Your email is verified" })).toBeVisible(); await scan(page, "verified-outcome");
   await login(page, email, password); await expect(page).toHaveURL(/\/onboarding$/); await scan(page, "onboarding");
-  await page.getByRole("button", { name: "Open dashboard" }).click(); await expect(page.getByRole("heading", { name: "Scheduling overview" })).toBeVisible();
+  await page.getByRole("button", { name: "Open dashboard" }).click(); await expect(page.getByRole("heading", { name: "Studio overview" })).toBeVisible();
   await page.goto("/forgot-password"); await page.getByLabel("Email address").fill(email); await page.getByRole("button", { name: "Request reset instructions" }).click(); await expect(page.getByRole("status")).toContainText("Request accepted"); const reset = await latestAccountToken(email, "PASSWORD_RESET");
   await page.goto(`/reset-password#token=${encodeURIComponent(reset)}`); await expect(page).toHaveURL(`${baseURL}/reset-password`); await expect(page.getByRole("heading", { name: "Choose a new password" })).toBeVisible(); await scan(page, "reset-token-form");
 

@@ -6,7 +6,7 @@ export type Surface = "book" | "admin";
 // /manage/* and /api/bookings/* are deliberately on BOTH surfaces: the dashboard's organizer
 // override controls link relatively to /manage/{id}/… (resolving against the admin origin), and
 // each of those routes authorizes independently via session or signed capability.
-const bookPrefixes = ["/gate", "/book", "/uppity-ai", "/manage", "/api/gate", "/api/public", "/api/bookings", "/api/health"];
+const bookPrefixes = ["/gate", "/book", "/manage", "/api/gate", "/api/public", "/api/bookings", "/api/health"];
 const adminPrefixes = [
   "/dashboard", "/bookings", "/availability", "/event-types", "/integrations", "/settings", "/onboarding",
   "/forgot-password", "/reset-password", "/verify-email", "/manage",

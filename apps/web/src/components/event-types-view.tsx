@@ -17,7 +17,7 @@ export function EventTypesView() {
   const [savingId, setSavingId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  useEffect(() => { frontendApi.listEventTypes().then(setEvents).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load event types.")).finally(() => setLoading(false)); }, []);
+  useEffect(() => { frontendApi.listEventTypes().then(setEvents).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load services.")).finally(() => setLoading(false)); }, []);
   const filtered = useMemo(() => events.filter((event) => (filter === "all" || event.status === filter) && event.title.toLowerCase().includes(query.toLowerCase())), [events, filter, query]);
   const copyLink = async (event: EventType) => {
     try { await navigator.clipboard.writeText(`${window.location.origin}/book/${event.slug}`); setCopiedId(event.id); window.setTimeout(() => setCopiedId(""), 1800); }
@@ -35,11 +35,11 @@ export function EventTypesView() {
     finally { setSavingId(""); }
   };
 
-  if (!canManage) return <div className="page-stack"><PageHeader title="Event types" /><section className="panel error-state" role="alert"><span><Icon name="x" /></span><h2>Organizer access required</h2><p>Your workspace role can view bookings and account settings, but cannot create or change event types.</p></section></div>;
+  if (!canManage) return <div className="page-stack"><PageHeader title="Services" /><section className="panel error-state" role="alert"><span><Icon name="x" /></span><h2>Studio access required</h2><p>Your workspace role can view bookings and account settings, but cannot create or change services.</p></section></div>;
   return <div className="page-stack">
-    <PageHeader title="Event types" description="Create and manage the experiences people can book." actions={<ButtonLink href="/event-types/new" icon="plus">Create event type</ButtonLink>} />
-    <div className="toolbar"><div className="search-field"><Icon name="search" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search event types" aria-label="Search event types" /></div><div className="segmented" aria-label="Filter event types">{(["all", "published", "draft"] as const).map((item) => <button type="button" key={item} className={filter === item ? "is-active" : ""} aria-pressed={filter === item} onClick={() => setFilter(item)}>{item === "all" ? "All" : item === "published" ? "Published" : "Drafts"} <span>{item === "all" ? events.length : events.filter((event) => event.status === item).length}</span></button>)}</div></div>
-    {loading && <div className="sync-note" role="status"><span className="spinner" />Syncing event types…</div>}
+    <PageHeader title="Services" description="Create and manage the experiences people can book." actions={<ButtonLink href="/event-types/new" icon="plus">Create service</ButtonLink>} />
+    <div className="toolbar"><div className="search-field"><Icon name="search" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search services" aria-label="Search services" /></div><div className="segmented" aria-label="Filter services">{(["all", "published", "draft"] as const).map((item) => <button type="button" key={item} className={filter === item ? "is-active" : ""} aria-pressed={filter === item} onClick={() => setFilter(item)}>{item === "all" ? "All" : item === "published" ? "Published" : "Drafts"} <span>{item === "all" ? events.length : events.filter((event) => event.status === item).length}</span></button>)}</div></div>
+    {loading && <div className="sync-note" role="status"><span className="spinner" />Syncing services…</div>}
     {error && <div className="toast toast-error" role="alert"><span><Icon name="x" /></span>{error}</div>}
     <div className="event-card-grid">
       {filtered.map((event) => <article className="event-card" key={event.id}>

@@ -116,7 +116,7 @@ describe("transactional email and recovery authority", () => {
     await db.$transaction((tx) => enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED")); booking = await db.booking.update({ where: { id: booking.id }, data: { mutationVersion: 1, startAt: new Date("2099-01-02T10:00:00Z"), endAt: new Date("2099-01-02T10:30:00Z") } }); await db.$transaction((tx) => enqueueBookingEmail(tx, booking, "BOOKING_RESCHEDULED"));
     await db.emailOutbox.updateMany({ where: { bookingId: booking.id, bookingMutationVersion: 1 }, data: { status: "PROCESSING", leaseToken: "dead", leaseExpiresAt: new Date("2020-01-01Z") } });
     const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider); await processEmailOutbox(owner.workspace.id, new Date(), provider);
-    expect(provider.messages).toHaveLength(2); expect(provider.messages.every((message) => message.text.includes("rescheduled"))).toBe(true); expect(await db.emailOutbox.count({ where: { bookingId: booking.id, status: "SUPERSEDED" } })).toBe(2); expect(await db.emailOutbox.count({ where: { bookingId: booking.id, status: "COMPLETED" } })).toBe(2);
+    expect(provider.messages).toHaveLength(2); expect(provider.messages.every((message) => message.text.includes("moved"))).toBe(true); expect(await db.emailOutbox.count({ where: { bookingId: booking.id, status: "SUPERSEDED" } })).toBe(2); expect(await db.emailOutbox.count({ where: { bookingId: booking.id, status: "COMPLETED" } })).toBe(2);
   });
 
   it("notifies the calendar owner without exposing invitee booking authority", async () => {
@@ -126,7 +126,7 @@ describe("transactional email and recovery authority", () => {
     expect(await db.emailOutbox.count({ where: { bookingId: booking.id } })).toBe(2);
     const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider);
     const invitee = provider.messages.find((message) => message.recipientEmail === booking.inviteeEmail)!; const organizer = provider.messages.find((message) => message.recipientEmail === owner.user.email)!;
-    expect(invitee.text).toContain(`/manage/${booking.id}/reschedule#recovery=`); expect(invitee.text).not.toContain(`/manage/${booking.id}/reschedule?recovery=`); expect(invitee.replyTo).toBe("support@example.invalid"); expect(organizer.subject).toBe("New booking: Owner event"); expect(organizer.replyTo).toBe("taylor@example.com"); expect(organizer.text).toContain("Taylor Guest (taylor@example.com) confirmed Owner event"); expect(organizer.text).toContain(`/bookings?selected=${booking.id}`); expect(organizer.text).not.toContain("recovery=");
+    expect(invitee.text).toContain(`/manage/${booking.id}/reschedule#recovery=`); expect(invitee.text).not.toContain(`/manage/${booking.id}/reschedule?recovery=`); expect(invitee.replyTo).toBe("support@example.invalid"); expect(organizer.subject).toBe("New appointment: Owner event"); expect(organizer.replyTo).toBe("taylor@example.com"); expect(organizer.text).toContain("Taylor Guest (taylor@example.com) booked Owner event"); expect(organizer.text).toContain(`/bookings?selected=${booking.id}`); expect(organizer.text).not.toContain("recovery=");
   });
 
   it("queues distinct invitee and organizer notices when both use the same address", async () => {
@@ -136,8 +136,8 @@ describe("transactional email and recovery authority", () => {
     expect(await db.emailOutbox.count({ where: { bookingId: booking.id } })).toBe(2);
     const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider);
     expect(provider.messages).toHaveLength(2); expect(new Set(provider.messages.map((message) => message.subject)).size).toBe(2);
-    expect(provider.messages.find((message) => message.subject.startsWith("New booking:"))?.replyTo).toBe(owner.user.email);
-    expect(provider.messages.find((message) => !message.subject.startsWith("New booking:"))?.replyTo).toBe("support@example.invalid");
+    expect(provider.messages.find((message) => message.subject.startsWith("New appointment:"))?.replyTo).toBe(owner.user.email);
+    expect(provider.messages.find((message) => !message.subject.startsWith("New appointment:"))?.replyTo).toBe("support@example.invalid");
   });
 
   it("encrypts the bounded local inbox and disables it outside explicit demo mode", async () => {

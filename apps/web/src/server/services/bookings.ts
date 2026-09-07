@@ -102,6 +102,28 @@ async function priorResult(slug: string, idempotencyKey: string, requestFingerpr
   return { booking: mapBooking(prior), checkoutUrl: prior.stripeCheckoutUrl, checkoutState: prior.priceCents === 0 ? "NOT_REQUIRED" : prior.stripeCheckoutUrl ? "READY" : "RETRY_REQUIRED", manageCapabilities: activeCapabilities === 3 ? materializeCapabilities(prior.id, prior.capabilityVersion, prior.manageExpiresAt, prior.capabilityKeyId) : null };
 }
 
+// One live appointment per client, keyed on the email they book with. The booking id travels on the
+// error so the caller can decide whether the requester has proved it is theirs before revealing it.
+export const ACTIVE_BOOKING_EXISTS = "ACTIVE_BOOKING_EXISTS";
+export function activeBookingConflict(bookingId: string) {
+  const error = new AppError(ACTIVE_BOOKING_EXISTS, "You already have an appointment booked with us. Reschedule that one instead of booking a second.", 409);
+  (error as AppError & { bookingId?: string }).bookingId = bookingId;
+  return error;
+}
+export async function activeBookingIdForEmail(workspaceId: string, email: string) {
+  // No public RLS policy exposes a Booking row by invitee email, so production asks a definer
+  // function that returns only the id. A plain query here would read empty in production.
+  if (process.env.DATABASE_PROVIDER === "postgresql" && process.env.NODE_ENV === "production") {
+    const rows = await db.$queryRawUnsafe<Array<{ id: string | null }>>("SELECT tempocove_active_booking_for_email($1::text) AS id", email);
+    return rows[0]?.id ?? null;
+  }
+  const row = await db.booking.findFirst({
+    where: { workspaceId, inviteeEmail: email.toLowerCase(), status: { in: activeStatuses }, endAt: { gt: new Date() } },
+    orderBy: { startAt: "asc" }, select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
 async function ensureCheckoutLinked(bookingId: string, payments: PaymentService) {
   const booking = await db.booking.findUniqueOrThrow({ where: { id: bookingId }, include: { eventType: true } });
   if (!booking.priceCents || booking.stripeCheckoutSessionId) return booking.stripeCheckoutUrl;
@@ -132,6 +154,8 @@ export async function createBooking(
     }
     return prior;
   }
+  const existing = await withDatabaseTransactionRetry(() => activeBookingIdForEmail(eventType.workspaceId, input.inviteeEmail));
+  if (existing) throw activeBookingConflict(existing);
   const duration = input.durationId ? eventType.durations.find((item) => item.id === input.durationId) : eventType.durations.find((item) => item.isDefault);
   if (!duration) throw notFound("Duration option");
   const answerMap = new Map((input.answers ?? []).map((answer) => [answer.questionId, answer.value]));
@@ -167,19 +191,18 @@ export async function createBooking(
         eventTitleSnapshot: eventType.name, locationTypeSnapshot: eventType.locationType,
         locationValueSnapshot: eventType.locationValue, calendarProviderSnapshot,
         idempotencyKey, requestFingerprint, capabilityVersion: capability.version, capabilityKeyId: capability.keyId, manageExpiresAt: capability.expiresAt,
-        status: duration.priceCents > 0 ? "PENDING_PAYMENT" : "CONFIRMED",
-        checkoutResumeExpiresAt: duration.priceCents > 0 ? new Date(Date.now() + 24 * 60 * 60_000) : null,
-        calendarSyncStatus: duration.priceCents > 0 ? "LOCAL" : "PENDING",
-        notificationStatus: duration.priceCents > 0 ? "LOCAL_NO_EMAIL" : "PENDING",
+        status: "CONFIRMED",
+        checkoutResumeExpiresAt: null,
+        calendarSyncStatus: "PENDING",
+        notificationStatus: "PENDING",
         answers: { create: eventType.questions.filter((item) => answerMap.has(item.id)).map((item) => ({ questionId: item.id, questionLabel: item.label, valueJson: JSON.stringify(answerMap.get(item.id)) })) },
       } });
       await tx.bookingOccupancy.createMany({ data: occupiedMinutes(requestedStart, requestedEnd, eventType.bufferBeforeMinutes, eventType.bufferAfterMinutes).map((minuteStart) => ({ workspaceId: eventType.workspaceId, bookingId: booking.id, hostId: eventType.ownerId, minuteStart })) });
       await tx.bookingCapability.createMany({ data: capabilityRows(booking.id, capability.version, capability.expiresAt, capability.keyId) });
-      if (!duration.priceCents) {
-        await tx.integrationOutbox.create({ data: { workspaceId: eventType.workspaceId, bookingId: booking.id, kind: "CALENDAR_CREATE", idempotencyKey: `calendar:create:${booking.id}:free` } });
-        await enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED");
-        await enqueueBookingReminder(tx, booking);
-      }
+      // Prices are display-only (settled at the shop), so every booking confirms immediately.
+      await tx.integrationOutbox.create({ data: { workspaceId: eventType.workspaceId, bookingId: booking.id, kind: "CALENDAR_CREATE", idempotencyKey: `calendar:create:${booking.id}:free` } });
+      await enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED");
+      await enqueueBookingReminder(tx, booking);
       return tx.booking.findUniqueOrThrow({ where: { id: booking.id }, include: bookingInclude });
     }, boundedPrismaTransactionOptions(remainingMs)));
   } catch (error) {
@@ -192,17 +215,8 @@ export async function createBooking(
     }
     throw error;
   }
-  let checkoutUrl: string | null = null;
-  let checkoutState: InternalCreateBookingResult["checkoutState"] = created.priceCents > 0 ? "RETRY_REQUIRED" : "NOT_REQUIRED";
-  if (created.priceCents > 0) {
-    try {
-      checkoutUrl = await ensureCheckoutLinked(created.id, payments);
-      checkoutState = checkoutUrl ? "READY" : "RETRY_REQUIRED";
-    } catch {
-      await db.booking.update({ where: { id: created.id }, data: { stripePaymentStatus: "checkout_retry" } });
-    }
-  } else if (shouldDrainOutboxInline()) await processBookingOutbox(created.id);
-  return { booking: mapBooking(created), checkoutUrl, checkoutState, manageCapabilities: materializeCapabilities(created.id, capability.version, capability.expiresAt, capability.keyId) };
+  if (shouldDrainOutboxInline()) await processBookingOutbox(created.id);
+  return { booking: mapBooking(created), checkoutUrl: null, checkoutState: "NOT_REQUIRED", manageCapabilities: materializeCapabilities(created.id, capability.version, capability.expiresAt, capability.keyId) };
 }
 
 export async function resumeBookingCheckout(id: string, payments: PaymentService = getPaymentService()): Promise<ResumeBookingCheckoutResult> {

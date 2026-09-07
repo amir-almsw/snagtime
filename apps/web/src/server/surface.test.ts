@@ -8,12 +8,12 @@ describe("origin surface enforcement", () => {
     }
   });
   it("serves the gate, booking, and manage surfaces on the booking origin", () => {
-    for (const path of ["/", "/gate", "/book/strategy-call", "/book/strategy-call/confirmation", "/uppity-ai/strategy-call", "/manage/abc/reschedule", "/api/gate", "/api/public/strategy-call/slots", "/api/bookings/abc", "/api/bookings/abc/manage-session", "/api/bookings/manage-link", "/api/health/ready"]) {
+    for (const path of ["/", "/gate", "/book/strategy-call", "/book/strategy-call/confirmation", "/manage/abc/reschedule", "/api/gate", "/api/public/strategy-call/slots", "/api/bookings/abc", "/api/bookings/abc/manage-session", "/api/bookings/manage-link", "/api/health/ready"]) {
       expect(surfaceAllows("book", path), path).toBe(true);
     }
   });
   it("hides the gate and public booking surfaces from the admin origin", () => {
-    for (const path of ["/gate", "/api/gate", "/book/strategy-call", "/uppity-ai/strategy-call", "/api/public/strategy-call", "/api/public/strategy-call/bookings"]) {
+    for (const path of ["/gate", "/api/gate", "/book/strategy-call", "/api/public/strategy-call", "/api/public/strategy-call/bookings"]) {
       expect(surfaceAllows("admin", path), path).toBe(false);
     }
   });
@@ -26,6 +26,7 @@ describe("origin surface enforcement", () => {
     expect(surfaceAllows("admin", "/bookings-export")).toBe(false);
     expect(surfaceAllows("book", "/booking")).toBe(false);
     expect(surfaceAllows("book", "/gatecrash")).toBe(false);
+    expect(surfaceAllows("book", "/uppity-ai/strategy-call")).toBe(false);
   });
   it("enforces nothing in the single-origin topology", () => {
     for (const surface of [undefined, "", "both"]) {

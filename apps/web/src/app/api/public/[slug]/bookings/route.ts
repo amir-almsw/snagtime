@@ -1,9 +1,9 @@
 import { apiError, jsonBody, ok } from "@/server/http";
-import { createBooking } from "@/server/services/bookings";
+import { ACTIVE_BOOKING_EXISTS, createBooking } from "@/server/services/bookings";
 import { bookingInput } from "@/server/validation";
 import { AppError } from "@/server/errors";
 import { clientAddress, enforceRateLimit } from "@/server/rate-limit";
-import { exchangeBookingCapabilities, manageCookieName, manageCookieOptions } from "@/server/auth/capabilities";
+import { exchangeBookingCapabilities, manageCookieName, manageCookieOptions, requireBookingManageSession } from "@/server/auth/capabilities";
 import { requireClientGate } from "@/server/auth/client-gate";
 
 type Context = { params: Promise<{ slug: string }> };
@@ -25,5 +25,15 @@ export async function POST(request: Request, context: Context) {
     if (session) response.cookies.set(manageCookieName(created.booking.id), session.token, { ...manageCookieOptions, expires: session.expiresAt });
     response.headers.set("Cache-Control", "no-store"); response.headers.set("Referrer-Policy", "no-referrer");
     return response;
-  } catch (error) { return apiError(error); }
+  } catch (error) {
+    // The blocking booking's id is only echoed back to a browser that already holds that booking's
+    // manage session, so the rule cannot be used to probe which emails have an appointment.
+    if (error instanceof AppError && error.code === ACTIVE_BOOKING_EXISTS) {
+      const blocked = (error as AppError & { bookingId?: string }).bookingId;
+      const owned = blocked ? await requireBookingManageSession(request, blocked, "read").then(() => true).catch(() => false) : false;
+      const response = apiError(error);
+      return owned ? Response.json({ error: { code: error.code, message: error.message, bookingId: blocked } }, { status: error.status, headers: { "Cache-Control": "no-store" } }) : response;
+    }
+    return apiError(error);
+  }
 }

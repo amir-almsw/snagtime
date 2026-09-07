@@ -13,9 +13,9 @@ export function ClientGateForm({ next }: { next: string }) {
     event.preventDefault(); setWorking(true); setError("");
     try {
       await frontendApi.enterClientGate(password);
-      window.location.assign(next.startsWith("/") && !next.startsWith("//") ? next : "/");
+      window.location.assign(next.startsWith("/") && !next.startsWith("//") ? next : "/book");
     } catch (reason) {
-      setError(reason instanceof SnagTimeApiError && reason.status === 429 ? reason.message : "That password is not correct.");
+      setError(reason instanceof SnagTimeApiError && reason.status === 429 ? reason.message : "That password isn’t right. Check with the studio and try again.");
       setWorking(false);
     }
   };
@@ -23,9 +23,9 @@ export function ClientGateForm({ next }: { next: string }) {
     <div className="auth-page">
       <main className="auth-card">
         <BrandMark />
-        <div><span className="outcome-eyebrow">Client access</span><h1>Enter the shop password</h1><p>Booking is reserved for clients of the shop. Ask us for the password if you don’t have it yet.</p></div>
+        <div><span className="outcome-eyebrow">Clients only</span><h1>Welcome to Dvision Studio</h1><p>The book is kept for our regulars. Enter the studio password to see what’s open — ask us for it next time you’re in the chair.</p></div>
         <form onSubmit={submit}>
-          <label>Shop password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
+          <label>Studio password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
           {error && <div className="form-error" role="alert" aria-live="assertive">{error}</div>}
           <button className="button button-primary" type="submit" disabled={working || !password}>{working ? "Checking…" : "Enter"}</button>
         </form>

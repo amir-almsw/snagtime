@@ -11,7 +11,7 @@ const workerBookingInclude = { eventType: true, host: { select: { id: true, name
 function assertWorkerRunning(signal?: AbortSignal) { if (signal?.aborted) throw new Error("OUTBOX_WORKER_STOPPING"); }
 
 // Once Google has notified the client (sendUpdates: "all" on create/update/delete), the deferred
-// SnagTime copy is redundant: mark it superseded so exactly one client message goes out per change.
+// Our own copy is redundant: mark it superseded so exactly one client message goes out per change.
 async function supersedeInviteeEmailAfterGoogleNotice(bookingId: string, kind: string, inviteeEmail: string) {
   await db.emailOutbox.updateMany({ where: { bookingId, kind, recipientEmail: inviteeEmail.toLowerCase(), status: "PENDING" }, data: { status: "SUPERSEDED", completedAt: new Date(), lastErrorCode: "GOOGLE_INVITE_SENT" } });
 }

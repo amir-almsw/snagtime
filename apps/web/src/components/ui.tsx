@@ -5,17 +5,16 @@ import { Icon, type IconName } from "./icons";
 
 export function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="brand-lockup" aria-label="SnagTime">
+    <div className="brand-lockup" aria-label="Dvision Studio">
       <span className="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32" role="presentation">
-          <rect x="5" y="6" width="22" height="20" rx="5" fill="currentColor" />
-          <path d="M10 4v5M22 4v5M5 12h22" fill="none" stroke="white" strokeWidth="2.25" strokeLinecap="round" />
-          <rect x="9" y="15" width="7" height="4" rx="2" fill="#93C5FD" />
-          <rect x="17" y="15" width="6" height="4" rx="2" fill="white" />
-          <path d="m18.5 18.5 6.5 2.7-2.6 1.1 1.8 3.2-1.9 1.1-1.8-3.2-2 2.1v-7Z" fill="#0B1F3A" stroke="white" strokeWidth=".8" strokeLinejoin="round" />
+        <svg viewBox="0 0 32 32" role="presentation" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="8.5" cy="23.5" r="4.2" />
+          <circle cx="23.5" cy="23.5" r="4.2" />
+          <path d="M11.6 20.6 24 4.5" />
+          <path d="M20.4 20.6 8 4.5" />
         </svg>
       </span>
-      {!compact && <span className="brand-name">SnagTime</span>}
+      {!compact && <span className="brand-name">Dvision Studio</span>}
     </div>
   );
 }

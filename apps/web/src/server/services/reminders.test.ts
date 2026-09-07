@@ -50,7 +50,7 @@ describe("appointment reminders", () => {
     expect(await db.emailOutbox.findFirstOrThrow({ where: { bookingId: booking.id, kind: "BOOKING_REMINDER" } })).toMatchObject({ status: "PENDING", attemptCount: 0 });
     await processEmailOutbox(owner.workspace.id, new Date(startAt.getTime() - 23 * HOUR), provider);
     expect(provider.messages).toHaveLength(1);
-    expect(provider.messages[0]!.subject).toBe(`Reminder: ${owner.event.name}`);
+    expect(provider.messages[0]!.subject).toBe(`See you soon: ${owner.event.name}`);
     expect(provider.messages[0]!.text).toContain(`/manage/${booking.id}/reschedule#recovery=`);
     expect(await db.emailOutbox.findFirstOrThrow({ where: { bookingId: booking.id, kind: "BOOKING_REMINDER" } })).toMatchObject({ status: "COMPLETED" });
   });
@@ -63,12 +63,12 @@ describe("appointment reminders", () => {
     expect(await db.emailOutbox.findFirstOrThrow({ where: { bookingId: booking.id, kind: "BOOKING_REMINDER" } })).toMatchObject({ status: "SUPERSEDED", lastErrorCode: "REMINDER_SUPERSEDED" });
     const provider = new CaptureProvider();
     await processEmailOutbox(owner.workspace.id, new Date(startAt.getTime() - 23 * HOUR), provider);
-    expect(provider.messages.some((message) => message.subject.startsWith("Reminder:"))).toBe(false);
+    expect(provider.messages.some((message) => message.subject.startsWith("See you soon:"))).toBe(false);
   });
 
   it("replaces the reminder on reschedule so exactly one pending row targets the new time", async () => {
     const event = await db.eventType.findFirstOrThrow({ where: { slug: "strategy-call" }, include: { durations: true } }); const duration = event.durations[0]!; const bookingId = randomUUID();
-    const startAt = new Date("2099-09-15T15:00:00Z");
+    const startAt = new Date("2099-09-15T09:00:00Z");
     const booking = await db.booking.create({ data: {
       id: bookingId, workspaceId: event.workspaceId, eventTypeId: event.id, hostId: event.ownerId, durationId: duration.id, durationMinutes: duration.durationMinutes,
       inviteeName: "Rescheduled Guest", inviteeEmail: "rescheduled-reminder@example.com", inviteeTimeZone: "America/Chicago", startAt, endAt: new Date(startAt.getTime() + duration.durationMinutes * 60_000),
@@ -77,7 +77,7 @@ describe("appointment reminders", () => {
     } });
     try {
       await db.$transaction((tx) => enqueueBookingReminder(tx, booking, new Date()));
-      const newStart = "2099-09-16T15:00:00.000Z";
+      const newStart = "2099-09-16T09:00:00.000Z";
       await rescheduleBooking(bookingId, newStart);
       const rows = await db.emailOutbox.findMany({ where: { bookingId, kind: "BOOKING_REMINDER" }, orderBy: { createdAt: "asc" } });
       expect(rows.filter((row) => row.status === "PENDING")).toHaveLength(1);

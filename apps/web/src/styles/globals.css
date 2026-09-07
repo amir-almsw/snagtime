@@ -61,7 +61,7 @@ a:focus-visible,button:focus-visible,[role=button]:focus-visible,[role=tab]:focu
 @media(max-width:540px){.metric-grid{gap:0}.metric-card{min-height:126px;padding:17px 16px}.metric-card+.metric-card{border-left:1px solid var(--line)}.metric-card:nth-child(3){border-left:0}.metric-icon{top:15px;right:15px;width:27px;height:27px}.metric-card>strong{font-size:26px}.integration-mark,.integration-mark svg{width:40px;height:40px}}
 .sidebar .sidebar-profile .avatar{color:#bfdbfe}.metric-detail{color:#5d696c}
 
-/* SnagTime identity: fast, clear scheduling with a confident blue system. */
+/* Dvision Studio identity: calm, confident surfaces with a single accent. */
 :root{--ink:#10213d;--muted:#52627a;--subtle:#5b6b82;--line:#dce5f1;--line-strong:#c8d5e6;--surface:#fff;--canvas:#f5f8fc;--brand:#2563eb;--brand-dark:#1d4ed8;--brand-soft:#eaf2ff;--blue:#2563eb;--blue-soft:#eaf2ff;--shadow:0 1px 2px rgba(15,35,68,.04);--shadow-lg:0 20px 55px rgba(15,35,68,.14)}
 .brand-mark{width:32px;height:32px;border-radius:0;background:transparent!important;color:var(--brand);overflow:visible}.brand-mark svg{width:32px;height:32px}.brand-name{color:var(--ink);font-size:18px;font-weight:790;letter-spacing:-.045em}
 .button.button-primary{background:var(--brand);border-color:var(--brand);color:#fff}.button.button-primary:hover:not(:disabled){background:#1e4fc2;border-color:#1e4fc2}.button.button-primary:disabled{background:#dbeafe;border-color:#dbeafe;color:#1e40af}.button-primary{box-shadow:0 5px 14px rgba(37,99,235,.2)}
@@ -71,3 +71,30 @@ a:focus-visible,button:focus-visible,[role=button]:focus-visible,[role=tab]:focu
 .date-chip{background:#f6f9ff;color:var(--ink);border-color:#d9e4f2}.integration-mark{background:#f3f7fd!important;border-color:#d7e2f0!important}.mark-worker{color:#1d4ed8!important}.duration-options button.is-selected{border-color:var(--brand);background:#f5f9ff;box-shadow:0 0 0 2px rgba(37,99,235,.09)}.time-grid button.is-selected{background:var(--brand-soft);border-color:var(--brand);color:#1e40af}.brand-preview{background:#eef4fb}.booking-info{background:#f8faff}.public-page{background:#f4f7fb}
 @media(max-width:820px){.sidebar{background:#0b1f3a}.sidebar .brand-name{color:#fff}}
 .stepper-step{appearance:none;display:inline-flex;align-items:center;gap:.35rem;min-width:44px;min-height:44px;padding:0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}.stepper-step:focus-visible{outline:2px solid var(--brand-dark);outline-offset:3px;border-radius:6px}.stepper-step[aria-disabled="true"]{color:#67727d;cursor:not-allowed}.stepper-step>span{font-size:inherit}.stepper-connector{height:1px;background:var(--line)}.flow-heading h2[tabindex="-1"]:focus{outline:none}
+.directory-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px}.directory-list .button{width:100%;justify-content:space-between}.directory-meta{color:var(--muted);font-size:11px;font-weight:600}.directory-description{margin:6px 2px 0;color:var(--muted);font-size:11px}
+
+/* Appearance switch: fixed at the top right of every surface, above the sticky topbar. */
+.theme-toggle{position:fixed;top:13px;right:16px;z-index:60;display:grid;place-items:center;width:36px;height:36px;border-radius:50%;border:1px solid var(--line-strong);background:var(--surface);color:var(--muted);box-shadow:var(--shadow);cursor:pointer;transition:color .14s ease,border-color .14s ease,background-color .14s ease}
+.theme-toggle:hover{color:var(--ink);border-color:var(--muted)}
+.topbar{padding-right:64px}
+.public-header{padding-right:max(64px,calc((100vw - 1180px)/2))}
+@media(max-width:820px){.topbar{padding-right:60px}.public-header{padding-right:60px}}
+@media(max-width:540px){.theme-toggle{top:10px;right:10px;width:33px;height:33px}}
+/* Card surfaces read from the token instead of a literal, so light mode is unchanged and dark mode follows. */
+.auth-card,.auth-card form input,.auth-card form select,.booking-shell,.booking-table-row,.bookings-toolbar select,.bookings-toolbar>.button,.brand-preview-card,.button-danger,.button-secondary,.confirmation-card,.current-booking,.detail-drawer,.duration-options button,.duration-row select,.editor-topbar,.event-card,.field input,.field select,.field textarea,.form-card,.input-prefix input,.integration-card,.integration-summary>div,.manage-form,.manage-summary,.metric-card,.metric-grid,.mini-booking-card,.modal,.public-header,.radio,.reschedule-picker,.search-field,.segmented button.is-active,.settings-nav button.is-active,.table-footer button,.time-grid button,.time-window select,.toggle span,.toolbar select{background:var(--surface)}
+
+/* Dark appearance. The inline layout script stamps data-theme before first paint. */
+:root[data-theme=dark]{color-scheme:dark;--ink:#eef1f6;--muted:#a2acbd;--subtle:#8d97a8;--line:#272e3a;--line-strong:#39424f;--surface:#171c25;--canvas:#0f1319;--surface-muted:#1e242f;--brand:#5b8cf5;--brand-dark:#8fb0ff;--brand-soft:#1b2740;--green:#4cbfa4;--green-soft:#132a26;--amber:#d8a445;--amber-soft:#2b2415;--red:#e2908c;--red-soft:#2f1c1c;--blue:#5b8cf5;--blue-soft:#1b2740;--shadow:0 1px 2px rgba(0,0,0,.4);--shadow-lg:0 20px 55px rgba(0,0,0,.55)}
+:root[data-theme=dark] .public-page,:root[data-theme=dark] .auth-page{background:var(--canvas)}
+:root[data-theme=dark] .booking-info{background:var(--surface-muted);border-color:var(--line)}
+:root[data-theme=dark] .topbar{background:rgba(15,19,25,.94)}
+:root[data-theme=dark] .booking-table-head,:root[data-theme=dark] .calendar-week,:root[data-theme=dark] .event-card-stats,:root[data-theme=dark] .review-event,:root[data-theme=dark] .empty-icon,:root[data-theme=dark] .metric-icon,:root[data-theme=dark] .quick-icon,:root[data-theme=dark] .badge-neutral,:root[data-theme=dark] .avatar,:root[data-theme=dark] .segmented,:root[data-theme=dark] .input-prefix,:root[data-theme=dark] .date-chip,:root[data-theme=dark] .number-chip,:root[data-theme=dark] .brand-preview,:root[data-theme=dark] .drawer-answer p,:root[data-theme=dark] .integration-mark,:root[data-theme=dark] .mini-week-grid>div,:root[data-theme=dark] .metric-brand,:root[data-theme=dark] .metric-green,:root[data-theme=dark] .metric-amber,:root[data-theme=dark] .metric-blue{background:var(--surface-muted)}
+:root[data-theme=dark] .booking-table-row:hover,:root[data-theme=dark] .booking-row:hover,:root[data-theme=dark] .event-summary:hover,:root[data-theme=dark] .icon-button:hover,:root[data-theme=dark] .button-secondary:hover,:root[data-theme=dark] .button-ghost:hover,:root[data-theme=dark] .public-link:hover{background:#232a36;border-color:var(--line-strong)}
+:root[data-theme=dark] .duration-options button.is-selected{background:var(--brand-soft)}
+:root[data-theme=dark] .button.button-primary:disabled{background:#243352;border-color:#243352;color:#93aef2}
+:root[data-theme=dark] .field input,:root[data-theme=dark] .field select,:root[data-theme=dark] .field textarea,:root[data-theme=dark] .auth-card form input,:root[data-theme=dark] .auth-card form select,:root[data-theme=dark] .toolbar select,:root[data-theme=dark] .search-field input,:root[data-theme=dark] .duration-row select,:root[data-theme=dark] .time-window select,:root[data-theme=dark] .bookings-toolbar select{color:var(--ink)}
+:root[data-theme=dark] .integration-mark{background:var(--surface-muted)!important}
+:root[data-theme=dark] .brand-logo-thumb,:root[data-theme=dark] .workspace-logo,:root[data-theme=dark] .uploaded-brand-logo{background:#f6f7fa}
+/* .booking-brand keeps a bottom margin from its sidebar origin; inside the fixed-height header that
+   margin is centred with the box and pins the lockup to the top edge. */
+.public-header .booking-brand{margin-bottom:0}

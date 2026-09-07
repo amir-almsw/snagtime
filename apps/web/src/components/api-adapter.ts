@@ -76,7 +76,7 @@ export function mapAvailability(schedule: AvailabilitySchedule): AvailabilityDay
   });
 }
 
-export function toAvailability(days: AvailabilityDay[], timeZone = "America/Chicago"): AvailabilitySchedule {
+export function toAvailability(days: AvailabilityDay[], timeZone = "Europe/Amsterdam"): AvailabilitySchedule {
   return { timeZone, intervals: days.flatMap((day, index) => day.enabled ? day.windows.map((window) => ({ dayOfWeek: index === 6 ? 0 : index + 1, startMinute: timeToMinutes(window.start), endMinute: timeToMinutes(window.end) })) : []) };
 }
 

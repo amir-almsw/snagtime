@@ -19,13 +19,13 @@ const eventTypeObject = z.object({
   bufferAfterMinutes: z.number().int().min(0).max(240),
   minimumNoticeMinutes: z.number().int().min(0).max(10080),
   bookingWindowDays: z.number().int().min(1).max(365),
-  // Paid event types are disabled for this deployment: the price columns stay, but only zero passes validation.
-  priceCents: z.number().int().min(0).max(0, "Paid event types are disabled."),
+  // Prices are display-only: clients see them and settle at the studio, so nothing here reaches a payment provider.
+  priceCents: z.number().int().min(0).max(10_000_000),
   currency: z.string().trim().toLowerCase().regex(/^[a-z]{3}$/),
   durations: z.array(z.object({
     id: z.string().min(1).max(100).optional(),
     label: z.string().trim().min(1).max(60), durationMinutes: z.number().int().min(10).max(480),
-    isDefault: z.boolean(), priceCents: z.number().int().min(0).max(0, "Paid event types are disabled."),
+    isDefault: z.boolean(), priceCents: z.number().int().min(0).max(10_000_000),
     currency: z.string().trim().toLowerCase().regex(/^[a-z]{3}$/), position: z.number().int().min(0).max(100),
   })).min(1).max(12).optional(),
   questions: z.array(z.object({

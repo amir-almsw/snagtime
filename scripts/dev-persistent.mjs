@@ -37,7 +37,7 @@ if (stopRequested) {
   const pid = readPid();
   if (!pid || !isRunning(pid)) {
     rmSync(pidFile, { force: true });
-    console.log(`No persistent SnagTime server is running on port ${port}.`);
+    console.log(`No persistent dev server is running on port ${port}.`);
     process.exit(0);
   }
 
@@ -51,7 +51,7 @@ if (stopRequested) {
 
 const existingPid = readPid();
 if (existingPid && isRunning(existingPid)) {
-  console.log(`SnagTime is already supervised on port ${port} (PID ${existingPid}).`);
+  console.log(`The dev server is already supervised on port ${port} (PID ${existingPid}).`);
   process.exit(0);
 }
 
@@ -98,7 +98,7 @@ process.on("uncaughtException", (error) => {
 function launch() {
   if (shuttingDown) return;
 
-  log(`Starting SnagTime on http://localhost:${port}`);
+  log(`Starting the dev server on http://localhost:${port}`);
   const command = `npx.cmd --no-install dotenv -e .env.local -- npm.cmd run dev --workspace @snagtime/web -- --port ${port}`;
   child = spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", command], {
     cwd: projectRoot,
@@ -114,7 +114,7 @@ function launch() {
   child.once("exit", (code, signal) => {
     child = null;
     if (shuttingDown) return;
-    log(`SnagTime exited (code ${code ?? "none"}, signal ${signal ?? "none"}); restarting in 2 seconds.`);
+    log(`Dev server exited (code ${code ?? "none"}, signal ${signal ?? "none"}); restarting in 2 seconds.`);
     setTimeout(launch, 2000);
   });
 }

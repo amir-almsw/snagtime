@@ -34,7 +34,7 @@ export function assertPaidBookingsConfigured() {
 export class StripeTestPaymentService implements PaymentService {
   private readonly stripe: Stripe;
   constructor(secretKey = process.env.STRIPE_SECRET_KEY, stripeClient?: Stripe) {
-    if (!stripeCredentialSetReady(secretKey, false)) throw new Error("SnagTime only accepts a complete authorized Stripe test-mode credential set.");
+    if (!stripeCredentialSetReady(secretKey, false)) throw new Error("Only a complete authorized Stripe test-mode credential set is accepted.");
     this.stripe = stripeClient ?? new Stripe(secretKey!);
   }
 

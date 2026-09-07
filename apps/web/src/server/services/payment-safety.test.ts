@@ -3,16 +3,19 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
+import { createBooking, listPublicSlots } from "@/server/services/bookings";
 import { eventTypeInput } from "@/server/validation";
 
 describe("payment and booking authority migration guards", () => {
-  it("rejects any non-zero price at the validation boundary so a paid event type cannot exist", () => {
+  it("accepts display-only prices at the validation boundary but keeps them bounded", () => {
     const base = { name: "Sharp fade", slug: "sharp-fade", durationMinutes: 30, color: "#2563eb", locationType: "IN_PERSON" as const, locationValue: "The shop", isActive: true, bufferBeforeMinutes: 0, bufferAfterMinutes: 0, minimumNoticeMinutes: 0, bookingWindowDays: 30, priceCents: 0, currency: "usd" };
     expect(eventTypeInput.safeParse(base).success).toBe(true);
-    expect(eventTypeInput.safeParse({ ...base, priceCents: 500 }).success).toBe(false);
-    expect(eventTypeInput.safeParse({ ...base, durations: [{ label: "30 min", durationMinutes: 30, isDefault: true, priceCents: 500, currency: "usd", position: 0 }] }).success).toBe(false);
+    expect(eventTypeInput.safeParse({ ...base, priceCents: 500 }).success).toBe(true);
+    expect(eventTypeInput.safeParse({ ...base, durations: [{ label: "30 min", durationMinutes: 30, isDefault: true, priceCents: 500, currency: "usd", position: 0 }] }).success).toBe(true);
+    expect(eventTypeInput.safeParse({ ...base, priceCents: 10_000_001 }).success).toBe(false);
+    expect(eventTypeInput.safeParse({ ...base, priceCents: -1 }).success).toBe(false);
   });
   it("binds a booking host to the exact EventType owner and blocks booked owner transfer", async () => {
     const event = await db.eventType.findFirstOrThrow({ include: { durations: true } });
@@ -88,5 +91,33 @@ describe("payment and booking authority migration guards", () => {
     expect(resumeRoute).toContain('requireBookingManageSession(request, id, "read")');
     expect(attempt).toContain("type StoredBookingAttempt = { fingerprint: string; key: string; bookingId?: string }");
     expect(attempt).not.toMatch(/StoredBookingAttempt[^\n]*(invitee|notes|answers|input)/i);
+  });
+});
+
+describe("display-only pricing", () => {
+  const names = ["EMAIL_TOKEN_SECRET", "NEXT_PUBLIC_APP_URL", "EMAIL_REPLY_TO", "BOOKING_CAPABILITY_KEY_ID", "BOOKING_CAPABILITY_SECRET", "CALENDAR_PROVIDER"] as const;
+  beforeEach(() => { process.env.EMAIL_TOKEN_SECRET = "display-price-test-secret-that-is-more-than-32b"; process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000"; process.env.EMAIL_REPLY_TO = "support@example.invalid"; process.env.BOOKING_CAPABILITY_KEY_ID = "display-price-v1"; process.env.BOOKING_CAPABILITY_SECRET = "display-price-capability-secret-that-is-long-1"; process.env.CALENDAR_PROVIDER = "local"; });
+  afterEach(() => { for (const name of names) delete process.env[name]; });
+
+  it("confirms a priced booking immediately with no checkout and full side effects", async () => {
+    const from = new Date(Date.now() + 86_400_000); const to = new Date(Date.now() + 21 * 86_400_000);
+    const slots = await listPublicSlots("paid-strategy-session", from, to, "UTC");
+    // Past the 24h reminder lead plus its 1h guard, so the reminder assertion below is meaningful.
+    const slot = slots.find((item) => new Date(item.start).getTime() > Date.now() + 26 * 60 * 60_000);
+    if (!slot) throw new Error("No seeded paid-strategy-session slot beyond the reminder lead window was available.");
+    const required = await db.customQuestion.findFirstOrThrow({ where: { eventType: { slug: "paid-strategy-session" }, required: true } });
+    const created = await createBooking("paid-strategy-session", { startAt: slot.start, inviteeName: "Walk-in Payer", inviteeEmail: "walk-in-payer@example.invalid", inviteeTimeZone: "UTC", answers: [{ questionId: required.id, value: "A sharper booking flow" }] }, `display-price-${randomUUID()}`);
+    try {
+      expect(created.booking.status).toBe("CONFIRMED");
+      expect(created.checkoutState).toBe("NOT_REQUIRED");
+      expect(created.checkoutUrl).toBeNull();
+      const row = await db.booking.findUniqueOrThrow({ where: { id: created.booking.id } });
+      expect(row.priceCents).toBeGreaterThan(0);
+      expect(row.stripeCheckoutSessionId).toBeNull();
+      expect(row.checkoutResumeExpiresAt).toBeNull();
+      expect(await db.integrationOutbox.count({ where: { bookingId: created.booking.id, kind: "CALENDAR_CREATE" } })).toBe(1);
+      expect(await db.emailOutbox.count({ where: { bookingId: created.booking.id, kind: "BOOKING_CONFIRMED" } })).toBeGreaterThan(0);
+      expect(await db.emailOutbox.count({ where: { bookingId: created.booking.id, kind: "BOOKING_REMINDER" } })).toBe(1);
+    } finally { await db.booking.delete({ where: { id: created.booking.id } }); }
   });
 });

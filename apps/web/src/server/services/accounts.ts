@@ -55,7 +55,7 @@ export async function registerAccount(input: RegistrationInput, observeWork: (ph
     await tx.$executeRaw`INSERT INTO "AvailabilitySchedule" ("id","workspaceId","userId","timeZone","createdAt","updatedAt") SELECT ${scheduleId},${workspaceId},${userId},${input.timeZone},${now},${now} WHERE ${created}=1`; observeWork("AVAILABILITY_INSERT");
     await tx.$executeRaw`UPDATE "AccountActionToken" SET "revokedAt"=${now} WHERE "userId"=${userId} AND purpose='EMAIL_VERIFY' AND "consumedAt" IS NULL AND "revokedAt" IS NULL AND ${created}=1`; observeWork("TOKEN_REVOKE");
     await tx.$executeRaw`INSERT INTO "AccountActionToken" ("id","workspaceId","userId","purpose","email","tokenHash","expiresAt","createdAt") SELECT ${tokenId},${workspaceId},${userId},'EMAIL_VERIFY',${email},${authority.tokenHash},${expiresAt},${now} WHERE ${created}=1`; observeWork("TOKEN_INSERT");
-    await tx.$executeRaw`INSERT INTO "EmailOutbox" ("id","workspaceId","kind","recipientEmail","subjectSnapshot","payloadJson","idempotencyKey","nextAttemptAt","createdAt","updatedAt") SELECT ${outboxId},${workspaceId},'EMAIL_VERIFY',${email},'Verify your SnagTime email',${payloadJson},${idempotencyKey},${now},${now},${now} WHERE ${created}=1`; observeWork("OUTBOX_INSERT");
+    await tx.$executeRaw`INSERT INTO "EmailOutbox" ("id","workspaceId","kind","recipientEmail","subjectSnapshot","payloadJson","idempotencyKey","nextAttemptAt","createdAt","updatedAt") SELECT ${outboxId},${workspaceId},'EMAIL_VERIFY',${email},'Verify your Dvision Studio email',${payloadJson},${idempotencyKey},${now},${now},${now} WHERE ${created}=1`; observeWork("OUTBOX_INSERT");
   });
   return { accepted: true as const };
 }

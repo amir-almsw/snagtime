@@ -27,14 +27,14 @@ test("@journey verification, onboarding, scheduling, recovery and tenant isolati
   await login(page, account.email, accountPassword);
   await expect(page).toHaveURL(/\/onboarding$/);
   await page.getByRole("button", { name: "Open dashboard" }).click();
-  await expect(page.getByRole("heading", { name: "Scheduling overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Studio overview" })).toBeVisible();
 
   await page.goto("/event-types/new");
-  await page.getByLabel("Event name").fill(`Quality call ${suffix}`);
+  await page.getByLabel("Service name").fill(`Quality call ${suffix}`);
   await page.getByLabel("Booking link").fill(`quality-${suffix}`);
   await page.getByLabel("Location").selectOption({ label: "Phone call" });
   await page.getByLabel("Phone instructions").fill("Organizer calls the invitee at the number supplied during booking.");
-  await page.getByRole("button", { name: "Publish event" }).click();
+  await page.getByRole("button", { name: "Publish service" }).click();
   await expect(page.getByRole("status")).toContainText("Changes saved");
 
   await page.goto("/forgot-password");

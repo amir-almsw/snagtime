@@ -12,7 +12,7 @@ import { WorkspaceAccessProvider } from "./workspace-access";
 
 const navigation: { href: string; label: string; icon: IconName }[] = [
   { href: "/dashboard", label: "Overview", icon: "dashboard" },
-  { href: "/event-types", label: "Event types", icon: "event-types" },
+  { href: "/event-types", label: "Services", icon: "event-types" },
   { href: "/availability", label: "Availability", icon: "availability" },
   { href: "/bookings", label: "Bookings", icon: "bookings" },
   { href: "/integrations", label: "Integrations", icon: "integrations" },
@@ -52,14 +52,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const logout = async () => { setAuthError(""); try { await frontendApi.logout(); setUser(null); setWorkspace(null); setOpen(false); } catch (reason) { setAuthError(reason instanceof Error ? reason.message : "Sign out failed."); } };
 
   if (user === undefined) return <div className="auth-page"><div className="auth-card" role="status"><BrandMark /><span className="spinner" /><p>Checking your session…</p></div></div>;
-  if (!user) return <div className="auth-page"><main className="auth-card"><BrandMark /><div><span className="outcome-eyebrow">Organizer access</span><h1>Welcome back</h1><p>Sign in to manage your availability, booking links, and meetings.</p></div><form onSubmit={login}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label><Link className="auth-inline-link" href="/forgot-password">Forgot password?</Link>{authError && <div className="form-error" role="alert" aria-live="assertive">{authError}</div>}<button className="button button-primary" type="submit" disabled={authenticating}>{authenticating ? "Signing in…" : "Sign in"}</button></form><p className="auth-switch"><Link href="/verify-email">Verify email</Link></p></main></div>;
+  if (!user) return <div className="auth-page"><main className="auth-card"><BrandMark /><div><span className="outcome-eyebrow">Studio access</span><h1>Welcome back</h1><p>Sign in to manage the book, your hours, and your services.</p></div><form onSubmit={login}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label><Link className="auth-inline-link" href="/forgot-password">Forgot password?</Link>{authError && <div className="form-error" role="alert" aria-live="assertive">{authError}</div>}<button className="button button-primary" type="submit" disabled={authenticating}>{authenticating ? "Signing in…" : "Sign in"}</button></form><p className="auth-switch"><Link href="/verify-email">Verify email</Link></p></main></div>;
   return (
     <WorkspaceAccessProvider workspace={workspace}><div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside id="primary-sidebar" ref={sidebarRef} className={`sidebar ${open ? "is-open" : ""}`} role={open ? "dialog" : undefined} aria-modal={open || undefined} aria-label={open ? "Primary navigation" : undefined} onKeyDown={trapNavigation}>
         <div className="sidebar-brand"><Link href="/dashboard"><BrandMark /></Link><button ref={closeButtonRef} type="button" className="icon-button sidebar-close" onClick={closeNavigation} aria-label="Close navigation"><Icon name="x" /></button></div>
         <nav className="sidebar-nav" aria-label="Primary navigation">
-          <div className="nav-label">Workspace</div>
+          <div className="nav-label">Studio</div>
           {navigation.filter((item) => workspace?.role !== "MEMBER" || item.href === "/dashboard" || item.href === "/bookings").map((item) => {
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return <Link key={item.href} href={item.href} onClick={() => setOpen(false)} className={`nav-item ${active ? "is-active" : ""}`} aria-current={active ? "page" : undefined}><Icon name={item.icon} /><span>{item.label}</span></Link>;
@@ -78,9 +78,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="app-frame" inert={open} aria-hidden={open || undefined}>
         <header className="topbar">
           <button ref={menuButtonRef} type="button" className="icon-button mobile-menu" onClick={() => setOpen(true)} aria-label="Open navigation" aria-expanded={open} aria-controls="primary-sidebar"><Icon name="menu" /></button>
-          <div className="workspace-switcher" aria-label="Current workspace">{workspaceLogoUrl ? <img src={workspaceLogoUrl} alt="" className="workspace-dot workspace-logo" /> : <span className="workspace-dot">{(workspace?.name || user.name).charAt(0).toUpperCase()}</span>}<span>{workspace?.name || "Organizer workspace"}</span></div>
+          <div className="workspace-switcher" aria-label="Current workspace">{workspaceLogoUrl ? <img src={workspaceLogoUrl} alt="" className="workspace-dot workspace-logo" /> : <span className="workspace-dot">{(workspace?.name || user.name).charAt(0).toUpperCase()}</span>}<span>{workspace?.name || "Dvision Studio"}</span></div>
           <div className="topbar-actions">
-            {workspace?.role !== "MEMBER" && <Link className="public-link" href="/event-types"><Icon name="external" size={15} />Manage booking links</Link>}
+            {workspace?.role !== "MEMBER" && <Link className="public-link" href="/event-types"><Icon name="external" size={15} />Manage services</Link>}
             <Avatar name={user.name} imageUrl={user.imageUrl} size="sm" />
           </div>
         </header>

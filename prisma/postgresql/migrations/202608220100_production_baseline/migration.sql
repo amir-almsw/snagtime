@@ -1181,10 +1181,11 @@ CREATE POLICY app_workspace_booking_outbox_insert ON "IntegrationOutbox" FOR INS
 CREATE POLICY app_workspace_schedule_write ON "AvailabilitySchedule" FOR ALL TO tempocove_app USING (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write') WITH CHECK (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write');
 CREATE POLICY app_workspace_override_write ON "AvailabilityOverride" FOR ALL TO tempocove_app USING (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write') WITH CHECK (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write');
 
--- Public slug resolution is the only workspace-less tenant read. Once resolved, the server
--- replaces it with a workspace-bound signed context before accessing children or bookings.
+-- Public slug resolution and the '__directory__' sentinel (the post-gate services list; active
+-- rows only, scalars only) are the only workspace-less tenant reads. Once a slug is resolved, the
+-- server replaces it with a workspace-bound signed context before accessing children or bookings.
 CREATE POLICY app_public_event ON "EventType" FOR SELECT TO tempocove_app
-USING (tempocove_context_valid('public') AND "isActive"=true AND split_part(current_setting('tempocove.subject',true),'|',1) IN (id,slug));
+USING (tempocove_context_valid('public') AND "isActive"=true AND split_part(current_setting('tempocove.subject',true),'|',1) IN (id,slug,'__directory__'));
 CREATE POLICY app_public_workspace ON "Workspace" FOR SELECT TO tempocove_app USING (
   tempocove_context_valid('public') AND tempocove_public_event_relation(split_part(current_setting('tempocove.subject',true),'|',1),"Workspace".id,NULL)
 );
@@ -1234,6 +1235,20 @@ END $fn$;
 ALTER FUNCTION tempocove_link_checkout(text,text,text) OWNER TO tempocove_rls_verifier;
 REVOKE ALL ON FUNCTION tempocove_link_checkout(text,text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tempocove_link_checkout(text,text,text) TO tempocove_app;
+-- One live appointment per client. No public policy exposes a Booking row by invitee email, so the
+-- one-booking rule asks this definer function instead: it returns only the id of the caller's own
+-- unfinished appointment and never a readable row, keeping email enumeration off the public surface.
+CREATE OR REPLACE FUNCTION tempocove_active_booking_for_email(p_email text)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+  SELECT b.id FROM "Booking" b
+  WHERE tempocove_context_valid('public') AND current_setting('tempocove.action',true)='booking_create'
+    AND b."workspaceId"=current_setting('tempocove.workspace_id',true)
+    AND lower(b."inviteeEmail")=lower(p_email) AND b.status IN ('CONFIRMED','PENDING_PAYMENT') AND b."endAt">clock_timestamp()
+  ORDER BY b."startAt" LIMIT 1
+$fn$;
+ALTER FUNCTION tempocove_active_booking_for_email(text) OWNER TO tempocove_rls_verifier;
+REVOKE ALL ON FUNCTION tempocove_active_booking_for_email(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tempocove_active_booking_for_email(text) TO tempocove_app;
 CREATE POLICY app_public_occupancy_claim ON "BookingOccupancy" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_create' AND tempocove_public_booking_claim("bookingId"));
 CREATE POLICY app_public_occupancy_read ON "BookingOccupancy" FOR SELECT TO tempocove_app USING (tempocove_public_booking_claim("bookingId"));
 CREATE POLICY app_public_outbox_claim ON "IntegrationOutbox" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_create' AND tempocove_public_booking_claim("bookingId") AND "workspaceId"=current_setting('tempocove.workspace_id',true) AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL);

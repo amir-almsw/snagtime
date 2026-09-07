@@ -27,6 +27,8 @@ export class SnagTimeApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly fieldErrors?: Record<string, string[]>,
+    // Set only when the server confirms the caller already holds that booking's manage session.
+    public readonly bookingId?: string,
   ) {
     super(message);
   }
@@ -40,7 +42,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const body = (await response.json()) as ApiResponse<T>;
   if (!response.ok || "error" in body) {
     const error = (body as ApiFailure).error;
-    throw new SnagTimeApiError(error.code, error.message, response.status, error.fieldErrors);
+    throw new SnagTimeApiError(error.code, error.message, response.status, error.fieldErrors, (error as { bookingId?: string }).bookingId);
   }
   return body.data;
 }

@@ -35,7 +35,7 @@ describe("google invitation as the client confirmation", () => {
     const provider = new CaptureProvider();
     await processEmailOutbox(booking.workspaceId, new Date(now.getTime() + GOOGLE_INVITE_FALLBACK_MS + 60_000), provider);
     expect(provider.messages.some((message) => message.recipientEmail === booking.inviteeEmail)).toBe(false);
-    expect(provider.messages.some((message) => message.subject.startsWith("New booking:"))).toBe(true);
+    expect(provider.messages.some((message) => message.subject.startsWith("New appointment:"))).toBe(true);
   });
 
   it("delivers the fallback confirmation with a manage link when the google invite cannot be created", async () => {

@@ -25,13 +25,13 @@ test("@gate unauthenticated public surfaces refuse to serve until the shop passw
   await expect(page).toHaveURL(/\/gate\?next=/);
 
   // A wrong password gets the one generic error and no entry.
-  await page.getByLabel("Shop password").fill("not-the-shop-password");
+  await page.getByLabel("Studio password").fill("not-the-shop-password");
   await page.getByRole("button", { name: "Enter" }).click();
-  await expect(page.locator(".form-error")).toContainText("not correct");
+  await expect(page.locator(".form-error")).toContainText("isn’t right");
   await expect(page).toHaveURL(/\/gate\?next=/);
 
   // The correct password completes the full gate → book → confirm journey.
-  await page.getByLabel("Shop password").fill(process.env.PLAYWRIGHT_CLIENT_GATE_PASSWORD!);
+  await page.getByLabel("Studio password").fill(process.env.PLAYWRIGHT_CLIENT_GATE_PASSWORD!);
   await page.getByRole("button", { name: "Enter" }).click();
   await expect(page).toHaveURL(/\/book\/strategy-call$/);
   await expect(page.locator(".time-grid button").first()).toBeVisible();
@@ -47,7 +47,7 @@ test("@gate unauthenticated public surfaces refuse to serve until the shop passw
 
 test("@gate the next parameter never leaves the origin", async ({ page }) => {
   await page.goto("/gate?next=//evil.example.com/phish");
-  await page.getByLabel("Shop password").fill(process.env.PLAYWRIGHT_CLIENT_GATE_PASSWORD!);
+  await page.getByLabel("Studio password").fill(process.env.PLAYWRIGHT_CLIENT_GATE_PASSWORD!);
   await page.getByRole("button", { name: "Enter" }).click();
   await page.waitForURL((url) => url.origin === baseURL && !url.pathname.startsWith("/gate"));
   expect(new URL(page.url()).origin).toBe(baseURL);

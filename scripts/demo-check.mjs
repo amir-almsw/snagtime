@@ -18,7 +18,7 @@ const templateKeys = [
 const requiredKeys = ["DATABASE_URL", "TOKEN_ENCRYPTION_KEY", "NEXT_PUBLIC_APP_URL", "DEMO_MODE", "DEMO_HOST_EMAIL", "DEMO_HOST_PASSWORD", "CALENDAR_PROVIDER", "OUTBOX_WORKER_ENABLED", "OUTBOX_POLL_INTERVAL_MS", "PAYMENTS_PROVIDER", "EMAIL_PROVIDER", "CLIENT_GATE_PASSWORD_HASH", "CLIENT_GATE_SECRET"];
 
 function fail(messages) {
-  console.error("SnagTime demo preflight failed:");
+  console.error("Demo preflight failed:");
   for (const message of messages) console.error(`- ${message}`);
   process.exitCode = 1;
 }
@@ -41,7 +41,7 @@ catch { fail(["The selected environment file is missing or invalid."]); process.
 const values = templateMode ? localParsed.values : new Map(Object.entries(process.env).map(([key, value]) => [key, value ?? ""]));
 if (!templateMode) for (const [key, value] of localParsed.values) if (!values.has(key)) values.set(key, value);
 const duplicates = localParsed.duplicates.filter((key) => templateKeys.includes(key)); const errors = [];
-if (duplicates.length) errors.push(`Duplicate SnagTime variables: ${[...new Set(duplicates)].sort().join(", ")}`);
+if (duplicates.length) errors.push(`Duplicate environment variables: ${[...new Set(duplicates)].sort().join(", ")}`);
 const missing = (templateMode ? templateKeys : requiredKeys).filter((key) => !values.has(key)); if (missing.length) errors.push(`Missing variables: ${missing.join(", ")}`);
 
 if (!templateMode) {
@@ -78,4 +78,4 @@ if (!templateMode) {
 }
 
 if (errors.length) fail(errors);
-else console.log(templateMode ? "SnagTime environment template contract is valid." : `${freeMode ? "SnagTime free-demo" : "SnagTime demo"} preflight passed against the local environment; no configured values were printed.`);
+else console.log(templateMode ? "Environment template contract is valid." : `${freeMode ? "Free-demo" : "Demo"} preflight passed against the local environment; no configured values were printed.`);
