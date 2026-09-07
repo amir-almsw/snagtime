@@ -114,24 +114,55 @@ Every secret must be independent. Store them in the platform's secret manager or
 
 ### 4. Build immutable images
 
-Use the 40-character Git commit SHA as `BUILD_ID`:
+`NEXT_PUBLIC_APP_URL` is inlined by Next.js at build time, so the booking and admin
+origins need one image each. Use the 40-character Git commit SHA as the build identity:
 
 ```bash
-BUILD_ID=$(git rev-parse HEAD)
-docker build --build-arg BUILD_ID="$BUILD_ID" --target runtime -t snagtime:"$BUILD_ID" .
-docker build --target migration -t snagtime-migration:"$BUILD_ID" .
+SHA=$(git rev-parse HEAD)
+docker build --build-arg BUILD_ID="$SHA" --target runtime \
+  --build-arg NEXT_PUBLIC_APP_URL=https://book.your-domain.example \
+  -t snagtime-book:"$SHA" .
+docker build --build-arg BUILD_ID="$SHA" --target runtime \
+  --build-arg NEXT_PUBLIC_APP_URL=https://admin.your-domain.example \
+  -t snagtime-admin:"$SHA" .
+docker build --target migration -t snagtime-migration:"$SHA" .
 ```
 
-The runtime refuses to start when its configured `BUILD_ID` does not match the compiled build.
+The runtime refuses to start when its configured `BUILD_ID` does not match the compiled build,
+so `BOOK_BUILD_ID` and `ADMIN_BUILD_ID` must both be set to the identity each image was built with.
 
 ### 5. Run migration, web, and worker
 
-Run the migration image with the migration database URL first. Then run two copies of the runtime image:
+Run the migration image with the migration database URL first. Then run three copies of the runtime image:
 
-- Web command: `node apps/web/server.js`
-- Worker command: `node dist/worker.mjs`
+- `web-book` — `node apps/web/server.js` with `SURFACE=book`
+- `web-admin` — `node apps/web/server.js` with `SURFACE=admin`
+- `worker` — `node dist/worker.mjs`
 
-Use `compose.production.yml` to see the required environment split and secret mounts for each service. The file deliberately declares secrets as external, so your orchestration layer must create them before startup.
+`SURFACE` must never be left unset in production. Unset means single-origin mode, which serves the
+dashboard on the public booking host; the configuration contract rejects anything but `book` or
+`admin` so this cannot happen silently.
+
+Use `compose.production.yml` to see the required environment split and secret mounts for each service.
+
+Secrets are file-backed, mounted from `./secrets/` next to the compose file, because Docker Swarm's
+`external: true` is not supported by plain `docker compose` and fails with `unsupported external
+secret`. Create them once:
+
+```bash
+bash scripts/init-production-secrets.sh   # generates the random values, flags the rest as TODO
+```
+
+The directory is created mode 700, every file mode 600, and `/secrets/` is gitignored. Fill in each
+`TODO` placeholder before deploying. If you later move to Swarm or Kubernetes, switch the block back
+to `external: true` and let the orchestrator provide them.
+
+Confirm the split before sharing any link:
+
+```bash
+curl -I https://book.your-domain.example/dashboard   # must be 404
+curl -I https://admin.your-domain.example/gate       # must be 404
+```
 
 ### 6. Configure providers
 

@@ -8,6 +8,9 @@ RUN npm ci --ignore-scripts
 FROM deps AS builder
 ARG BUILD_ID
 ENV BUILD_ID=${BUILD_ID}
+# Next.js inlines NEXT_PUBLIC_* at build time, so the booking and admin origins need one image each.
+ARG NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
 COPY . .
 RUN node -e "if(!/^[a-f0-9]{40,64}$/i.test(process.env.BUILD_ID||''))throw new Error('required immutable BUILD_ID build argument missing or invalid')" \
  && npm run db:generate && npm run db:generate:postgres && npm run worker:build && npm run build
@@ -25,6 +28,9 @@ COPY --from=production-deps --chown=node:node /src/node_modules ./node_modules
 COPY --from=builder --chown=node:node /src/node_modules/@tempocove/postgresql-client ./node_modules/@tempocove/postgresql-client
 COPY --from=builder --chown=node:node /src/apps/web/.next/standalone ./
 COPY --from=builder --chown=node:node /src/apps/web/.next/static ./apps/web/.next/static
+# Next.js standalone resolves the Prisma engine relative to apps/web, not the workspace root,
+# so the generated PostgreSQL client must exist under both paths or the engine is not found.
+COPY --from=builder --chown=node:node /src/node_modules/@tempocove/postgresql-client ./apps/web/node_modules/@tempocove/postgresql-client
 COPY --from=builder --chown=node:node /src/dist ./dist
 COPY --chown=node:node scripts/container-entrypoint.mjs ./scripts/container-entrypoint.mjs
 COPY --chown=node:node scripts/runtime-dependency-check.mjs ./scripts/runtime-dependency-check.mjs
