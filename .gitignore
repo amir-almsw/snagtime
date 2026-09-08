@@ -20,3 +20,5 @@ runtime/
 
 # Production secrets mounted by compose. Never commit these.
 /secrets/
+test.env
+compose.local-test.yml

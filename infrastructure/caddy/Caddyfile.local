@@ -1,0 +1,44 @@
+# Local HTTPS ingress for the production compose stack.
+#
+# The app is origin-locked: every state-changing route calls assertSameOrigin(), which compares the
+# browser's Origin header against NEXT_PUBLIC_APP_URL and returns 401 UNAUTHORIZED on any mismatch.
+# The production contract additionally requires that origin to be HTTPS with path "/", so the stack
+# cannot be reached over http://localhost:PORT at all -- admin login and the client booking gate both
+# reject every request before they look at the password. This proxy terminates TLS on the canonical
+# hostnames so local testing exercises the same ingress path as production.
+#
+# See docs/DEPLOYMENT.md "Local HTTPS ingress" for the hosts entries and CA trust steps.
+
+{
+	# Issue every certificate from Caddy's own local CA. Without this, a hostname that looks
+	# publicly resolvable (book.example.com) would send Caddy to Let's Encrypt and fail.
+	local_certs
+	# No admin API: nothing local needs to reconfigure this proxy at runtime.
+	admin off
+}
+
+{$BOOK_HOST:book.localhost} {
+	reverse_proxy web-book:3000 {
+		# clientAddress() in server/rate-limit.ts treats x-tempocove-proxy-secret as proof that a
+		# request arrived through trusted ingress, and only then reads the first x-forwarded-for
+		# entry as the client IP. A client that supplied either one itself would forge its own
+		# source address and walk past the per-IP limits on /api/gate and /api/auth/session.
+		#
+		# `header_up Name value` is what stops that: it SETS the header, replacing any copy the
+		# client sent. Do NOT pair it with a `header_up -Name` delete line -- Caddy applies
+		# deletions after sets, so the delete removes the value just injected and the upstream
+		# receives no header at all. That fails closed rather than open, but it collapses every
+		# visitor into the single "global-untrusted-proxy" bucket, which makes the 12-per-15-minutes
+		# admin login limit trivial to exhaust for everyone at once. Verified against Caddy 2.
+		header_up X-Tempocove-Proxy-Secret {env.PROXY_SHARED_SECRET}
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
+{$ADMIN_HOST:admin.localhost} {
+	reverse_proxy web-admin:3000 {
+		# See the note on the booking site above: set replaces, never add a delete line.
+		header_up X-Tempocove-Proxy-Secret {env.PROXY_SHARED_SECRET}
+		header_up X-Forwarded-For {remote_host}
+	}
+}

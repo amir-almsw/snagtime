@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import type { Membership, User, Workspace } from "@prisma/client";
 import { db } from "@/server/db";
 import { AppError, unauthorized } from "@/server/errors";
-import { enterDatabaseContext } from "@/server/db-context";
+import { enterDatabaseContext, updateDatabaseContext } from "@/server/db-context";
 import { systemEmailIdentity } from "@/server/email-config";
 
 export const SESSION_COOKIE = "tempocove_session";
@@ -79,7 +79,10 @@ export async function getSessionRecord(request: Request) {
     where: { tokenHash, userId: session.userId, revokedAt: null, expiresAt: { gt: new Date() }, membership: { status: "ACTIVE", userId: session.userId } },
     include: { user: true, membership: true, workspace: true },
   });
-  if (record) enterDatabaseContext({ mode: "workspace", workspaceId: record.activeWorkspaceId, userId: record.userId, sessionHash: tokenHash, subject: record.membership.role,action:"workspace_read" });
+  // Refines the session context entered above rather than replacing it: this runs after an await,
+  // where enterWith would be discarded the moment this function returns, leaving every workspace
+  // route with an empty tempocove.workspace_id and so no RLS access to its own tenant.
+  if (record) updateDatabaseContext({ mode: "workspace", workspaceId: record.activeWorkspaceId, userId: record.userId, sessionHash: tokenHash, subject: record.membership.role,action:"workspace_read" });
   return record || null;
 }
 

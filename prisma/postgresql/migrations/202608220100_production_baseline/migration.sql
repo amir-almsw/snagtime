@@ -1455,7 +1455,7 @@ CREATE POLICY app_provider_recovery_insert ON "BookingRecoveryToken" FOR INSERT 
 CREATE POLICY app_provider_recovery_read ON "BookingRecoveryToken" FOR SELECT TO tempocove_app USING (tempocove_context_valid('provider') AND "bookingId"=split_part(current_setting('tempocove.subject',true),'|',1));
 ALTER TABLE "RateLimitBucket" ENABLE ROW LEVEL SECURITY; ALTER TABLE "RateLimitBucket" FORCE ROW LEVEL SECURITY;
 CREATE TABLE tempocove_rate_policy(limit_value integer NOT NULL,window_ms integer NOT NULL,PRIMARY KEY(limit_value,window_ms));
-INSERT INTO tempocove_rate_policy VALUES (3,3600000),(4,3600000),(5,3600000),(8,3600000),(8,900000),(10,3600000),(10,60000),(12,3600000),(12,900000),(20,3600000),(20,900000),(30,3600000),(30,900000),(30,60000),(120,60000),(240,60000);
+INSERT INTO tempocove_rate_policy VALUES (3,3600000),(4,3600000),(5,3600000),(5,300000),(8,3600000),(8,900000),(10,3600000),(10,60000),(12,3600000),(12,900000),(20,3600000),(20,900000),(30,3600000),(30,900000),(30,60000),(120,60000),(200,3600000),(240,60000);
 REVOKE ALL ON tempocove_rate_policy FROM PUBLIC,tempocove_app,tempocove_worker,tempocove_monitor;
 CREATE TABLE tempocove_rate_configuration(singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),max_buckets integer NOT NULL CHECK(max_buckets BETWEEN 1 AND 100000));
 INSERT INTO tempocove_rate_configuration(singleton,max_buckets) VALUES(true,100000);
