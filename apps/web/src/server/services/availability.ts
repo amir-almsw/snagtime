@@ -80,7 +80,7 @@ export function generateSlots({
             durationId: eventType.durationId ?? "legacy-default",
             durationMinutes: eventType.durationMinutes,
             priceCents: eventType.priceCents ?? 0,
-            currency: eventType.currency ?? "usd",
+            currency: eventType.currency ?? "eur",
           });
         }
         cursor = cursor.plus({ minutes: 15 });

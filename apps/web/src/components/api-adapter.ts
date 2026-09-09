@@ -45,8 +45,8 @@ export function toEventInput(event: EventType): CreateEventTypeInput {
     minimumNoticeMinutes: event.minimumNoticeMinutes,
     bookingWindowDays: event.bookingWindowDays,
     priceCents: primary.price ? Math.round(primary.price * 100) : 0,
-    currency: primary.currency ?? "USD",
-    durations: event.durations.map((duration, position) => ({ ...(duration.id ? { id: duration.id } : {}), label: duration.label, durationMinutes: duration.minutes, isDefault: duration.isDefault, priceCents: duration.price ? Math.round(duration.price * 100) : 0, currency: duration.currency ?? "USD", position })),
+    currency: primary.currency ?? "EUR",
+    durations: event.durations.map((duration, position) => ({ ...(duration.id ? { id: duration.id } : {}), label: duration.label, durationMinutes: duration.minutes, isDefault: duration.isDefault, priceCents: duration.price ? Math.round(duration.price * 100) : 0, currency: duration.currency ?? "EUR", position })),
     questions: event.questions.map((question, position) => ({ ...(question.id ? { id: question.id } : {}), label: question.label, kind: question.kind, required: question.required, options: question.options, position })),
   };
 }

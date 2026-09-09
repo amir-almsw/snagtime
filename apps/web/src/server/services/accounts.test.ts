@@ -5,7 +5,8 @@ import { assertProductionRuntimeSecurity, createSessionForUser, getSessionRecord
 import { verifyPassword } from "@/server/auth/password";
 import { changeAccountPassword, getAccountSummary, registerAccount, updateMembershipRole } from "@/server/services/accounts";
 import { getAvailability } from "@/server/services/availability";
-import { setBranding } from "@/server/services/branding";
+import { getBranding, setBranding } from "@/server/services/branding";
+import { brandingInput } from "@/server/validation";
 import { getEventTypeById, listEventTypes } from "@/server/services/event-types";
 import { GET as sessionRoute, POST as loginRoute } from "@/app/api/auth/session/route";
 import { PATCH as profileImageRoute } from "@/app/api/account/profile-image/route";
@@ -86,6 +87,19 @@ describe("production workspace accounts", () => {
     await expect(setBranding(created.workspace.id, created.user.id, { workspaceName: "Renamed workspace", logoUrl, accentColor: "#2255AA", description: "Updated", footerText: null })).resolves.toMatchObject({ workspaceName: "Renamed workspace", logoUrl });
     await expect(db.workspace.findUniqueOrThrow({ where: { id: created.workspace.id } })).resolves.toMatchObject({ name: "Renamed workspace" });
     await expect(getAccountSummary(created.access)).resolves.toMatchObject({ workspace: { name: "Renamed workspace" }, workspaces: [{ name: "Renamed workspace" }] });
+  });
+
+  it("returns only the branding contract, so the settings page can send a saved result straight back", async () => {
+    const created = await account("branding-shape", false);
+    const input = { workspaceName: "Round trip", logoUrl: null, accentColor: "#2255AA", description: "First save", footerText: null };
+    const saved = await setBranding(created.workspace.id, created.user.id, input);
+    expect(Object.keys(saved).sort()).toEqual(Object.keys(input).sort());
+    // The exact failure mode: a strict schema rejecting id/workspaceId/userId echoed from the row.
+    expect(() => brandingInput.parse(saved)).not.toThrow();
+    const loaded = await getBranding(created.workspace.id);
+    expect(Object.keys(loaded).sort()).toEqual(Object.keys(input).sort());
+    expect(() => brandingInput.parse(loaded)).not.toThrow();
+    await expect(setBranding(created.workspace.id, created.user.id, { ...loaded, accentColor: "#112233" })).resolves.toMatchObject({ accentColor: "#112233" });
   });
 
   it("canonicalizes branding images, rejects new remote URLs, and preserves an unchanged legacy remote URL", async () => {

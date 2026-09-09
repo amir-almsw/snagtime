@@ -4,12 +4,19 @@ import { enterDatabaseAction } from "@/server/db-context";
 import { canonicalizeImageDataUrl, isRemoteImageUrl } from "@/server/image-ingestion";
 import { AppError } from "@/server/errors";
 
-export async function getBranding(workspaceId: string): Promise<WorkspaceBranding> {
-  const workspace = await db.workspace.findUniqueOrThrow({ where: { id: workspaceId }, include: { branding: true } });
-  return workspace.branding ?? { workspaceName: workspace.name, logoUrl: null, accentColor: "#2563EB", description: null, footerText: null };
+// The stored row also carries id, workspaceId and userId. The settings page keeps whatever this
+// service returns and sends it straight back on the next save, and brandingInput is strict, so
+// echoing the raw row made every save after the first fail with an unhighlightable 422.
+export function mapBranding(row: WorkspaceBranding): WorkspaceBranding {
+  return { workspaceName: row.workspaceName, logoUrl: row.logoUrl, accentColor: row.accentColor, description: row.description, footerText: row.footerText };
 }
 
-export async function setBranding(workspaceId: string, userId: string, input: WorkspaceBranding) {
+export async function getBranding(workspaceId: string): Promise<WorkspaceBranding> {
+  const workspace = await db.workspace.findUniqueOrThrow({ where: { id: workspaceId }, include: { branding: true } });
+  return workspace.branding ? mapBranding(workspace.branding) : { workspaceName: workspace.name, logoUrl: null, accentColor: "#2563EB", description: null, footerText: null };
+}
+
+export async function setBranding(workspaceId: string, userId: string, input: WorkspaceBranding): Promise<WorkspaceBranding> {
   enterDatabaseAction("branding_write");
   const canonicalLogo = input.logoUrl && !isRemoteImageUrl(input.logoUrl) ? await canonicalizeImageDataUrl(input.logoUrl, "logoUrl") : input.logoUrl;
   return db.$transaction(async (tx) => {
@@ -17,6 +24,6 @@ export async function setBranding(workspaceId: string, userId: string, input: Wo
     if (canonicalLogo && isRemoteImageUrl(canonicalLogo) && canonicalLogo !== existing?.logoUrl) throw new AppError("INVALID_IMAGE", "Remote image URLs cannot be saved. Upload the image file instead.", 422, { logoUrl: ["Remote image URLs cannot be saved. Upload the image file instead."] });
     const persistedInput = { ...input, logoUrl: canonicalLogo };
     await tx.workspace.update({ where: { id: workspaceId }, data: { name: input.workspaceName } });
-    return tx.workspaceBranding.upsert({ where: { workspaceId }, update: persistedInput, create: { ...persistedInput, workspaceId, userId } });
+    return mapBranding(await tx.workspaceBranding.upsert({ where: { workspaceId }, update: persistedInput, create: { ...persistedInput, workspaceId, userId } }));
   });
 }
