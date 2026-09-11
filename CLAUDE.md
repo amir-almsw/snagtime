@@ -71,6 +71,8 @@ Consequences:
 
 **Request paths must call an `enter*DatabaseContext()` helper before touching `db`** — `enterDatabaseContext`, `enterAuthDatabaseContext`, `enterPublicDatabaseContext`, `enterPublicBookingDatabaseContext`, `enterCapabilityDatabaseContext`, `enterProviderDatabaseContext`, plus `enterBootstrapDatabaseContext` for registration and `enterDatabaseAction` to re-tag an existing context. Omitting it is silent locally (SQLite skips the proxy entirely) and fails the policy check in production. This is the most common class of bug that unit tests will not catch.
 
+The store is an `AsyncLocalStorage`, so *where* the helper is called matters as much as whether it is called. A context entered inside a helper after that helper's first `await` is discarded when the helper returns and never reaches the route that awaited it. Enter it in the handler's own frame, or as the first statement of a helper before any `await` (see `authorize()` in `app/api/bookings/[id]/route.ts` and `getSessionRecord()`), and refine an in-flight context with `updateDatabaseContext`/`enterDatabaseAction` rather than re-entering. `manage-session-context.test.ts` shows how to observe the context a route sends when SQLite cannot enforce it.
+
 ### Side effects go through an outbox, never inline
 
 Calendar mutations enqueue `IntegrationOutbox` rows; email enqueues `EmailOutbox`. `server/worker.ts` polls both (`drainDueOutbox`, `processEmailOutbox`) and writes a `WorkerHeartbeat` row that `/api/health/ready` checks — a stalled worker makes the whole app report unready.
@@ -78,6 +80,10 @@ Calendar mutations enqueue `IntegrationOutbox` rows; email enqueues `EmailOutbox
 Claims are optimistic compare-and-swap: `updateMany` filtered on `status`, a random `leaseToken`, and the booking's `mutationVersion`, rather than row locks. That is why the same code runs on SQLite and PostgreSQL. `EmailOutbox.nextAttemptAt` is honoured by the claim query, so future-dated rows give you scheduled delivery for free.
 
 Do not call Google or SMTP directly from a route handler.
+
+### Availability is database-first
+
+`listPublicSlots` in `server/services/bookings.ts` builds the client-facing slots from the schedule tables plus the host's booked time, and only then merges provider busy intervals. In production the public RLS policy hides every `Booking` row except the caller's own claim, so booked time is read through the `tempocove_public_host_busy` definer function (buffered ranges only, no invitee data); SQLite reads the rows directly. Google FreeBusy is supplementary: a disconnected Google contributes no busy time and a failing one is logged as `provider_busy_unavailable` and skipped, never a 503. Calendar *mutations* still fail closed on the provider recorded in `calendarProviderSnapshot`.
 
 ### Fail-closed production contract
 

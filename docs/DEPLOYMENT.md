@@ -26,7 +26,7 @@ A Linux VPS with Docker is the most direct fit. Container platforms can also wor
 | Background work | Embedded in web process | Dedicated worker |
 | URL | `http://localhost:3000` | Canonical HTTPS origin |
 | Secrets | Ignored `.env.local` | Secret manager or mounted secret files |
-| Calendar | Local or Google | Google |
+| Calendar | Local or Google | Google, mirroring appointments; availability itself always comes from the database |
 | Email | Local inbox or SMTP | TLS SMTP |
 | Payments | Stub or Stripe test | Stripe test only |
 
@@ -278,7 +278,7 @@ At minimum:
 4. Sign in as the bootstrapped admin and confirm the dashboard loads.
 5. Enter the client gate with the studio password on the booking origin.
 6. Confirm the origin split: `/dashboard` returns 404 on the booking host, `/gate` returns 404 on the admin host.
-7. Connect Google Calendar and verify free/busy blocking.
+7. Create a booking before connecting Google and confirm its slot disappears from the booking page immediately. Then connect Google Calendar and verify the event appears on the studio calendar.
 8. Create, reschedule, and cancel a booking.
 9. Confirm organizer and invitee SMTP delivery from unrelated mailboxes.
 10. Restart web and worker containers and verify data remains intact.

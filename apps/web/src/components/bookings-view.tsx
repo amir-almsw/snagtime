@@ -13,7 +13,7 @@ const tones: Record<BookingStatus, "success" | "warning" | "danger"> = { confirm
 function notificationCopy(status: Booking["notificationStatus"]) {
   switch (status) {
     case "GOOGLE_UPDATE_ACCEPTED": return "Google Calendar accepted the latest booking update.";
-    case "LOCAL_NO_EMAIL": return "Saved locally. No external email was sent.";
+    case "LOCAL_NO_EMAIL": return "Saved in the studio schedule and confirmed by email. Not mirrored to Google Calendar.";
     case "RETRY_PENDING": return "The update will be retried automatically.";
     case "PENDING": return "Waiting to sync this booking update.";
   }

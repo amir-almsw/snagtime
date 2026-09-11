@@ -142,4 +142,4 @@ The local student setup is complete when:
 - The assistant clearly labels local adapters versus connected external services.
 - `.env.local` remains ignored and no credential appears in Git history or chat.
 
-An integration is complete only after its provider-specific verification steps pass. A public deployment is complete only after HTTPS, backups, worker processing, organizer and invitee email delivery, Google free/busy behavior, and Stripe test webhooks have all been verified.
+An integration is complete only after its provider-specific verification steps pass. A public deployment is complete only after HTTPS, backups, worker processing, organizer and invitee email delivery, database-first availability (a new booking's slot disappears immediately, with or without Google connected), Google event mirroring, and Stripe test webhooks have all been verified.

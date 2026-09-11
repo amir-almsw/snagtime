@@ -5,7 +5,7 @@ import { capabilityRows, materializeCapabilities, newCapabilityIdentity } from "
 import { db } from "@/server/db";
 import { AppError, conflict, notFound } from "@/server/errors";
 import { mapBooking } from "@/server/mappers";
-import { generateSlots, getAvailability } from "@/server/services/availability";
+import { generateSlots, getAvailability, type BusyInterval } from "@/server/services/availability";
 import { getCalendarService, providerCalendarEventId, type CalendarService } from "@/server/services/calendar";
 import { getEventTypeBySlug, getEventTypeForSlotsBySlug } from "@/server/services/event-types";
 import { currentDatabaseContext, enterDatabaseAction, enterDatabaseContext, enterPublicBookingDatabaseContext, enterPublicDatabaseContext } from "@/server/db-context";
@@ -14,6 +14,7 @@ import { shouldDrainOutboxInline } from "@/server/services/outbox-dispatch";
 import { getPaymentService, type PaymentService } from "@/server/services/payments";
 import { enqueueBookingEmail, enqueueBookingReminder, supersedeBookingReminders } from "@/server/services/notifications";
 import { boundedPrismaTransactionOptions, withDatabaseTransactionRetry } from "@/server/database-retry";
+import { structuredLog } from "@/server/observability";
 
 const activeStatuses = ["CONFIRMED", "PENDING_PAYMENT"];
 function providerErrorCode(error: unknown) { return typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code || "") : ""; }
@@ -46,6 +47,25 @@ export async function listManageRescheduleSlots(id: string, from: Date, to: Date
   return slots.filter((slot) => new Date(slot.start).getTime() !== booking.startAt.getTime());
 }
 
+// The host's booked time is read from the database on every slot request, so a confirmed appointment
+// leaves the booking page immediately, before any calendar mirror catches up. In production no public
+// policy exposes another client's Booking row, so the read goes through the tempocove_public_host_busy
+// definer function, which returns only buffered (start, end) ranges for the event's host and never a
+// row: client names and emails stay off the public surface. SQLite has no RLS and reads the rows.
+export async function hostBookedIntervals(eventType: { id: string; workspaceId: string; ownerId: string }, from: Date, to: Date, excludeBookingId?: string): Promise<BusyInterval[]> {
+  if (process.env.DATABASE_PROVIDER === "postgresql" && process.env.NODE_ENV === "production") {
+    const rows = await db.$queryRawUnsafe<Array<{ busy_start: Date | string; busy_end: Date | string }>>("SELECT busy_start,busy_end FROM tempocove_public_host_busy($1::text,$2::timestamp,$3::timestamp,$4::text)", eventType.id, from.toISOString(), to.toISOString(), excludeBookingId ?? "");
+    return rows.map((row) => ({ start: new Date(row.busy_start), end: new Date(row.busy_end) }));
+  }
+  const rangeStart = DateTime.fromJSDate(from).minus({ minutes: MAX_VALIDATED_BOOKING_BUFFER_MINUTES }).toJSDate();
+  const rangeEnd = DateTime.fromJSDate(to).plus({ minutes: MAX_VALIDATED_BOOKING_BUFFER_MINUTES }).toJSDate();
+  const bookings = await db.booking.findMany({
+    where: { id: excludeBookingId ? { not: excludeBookingId } : undefined, workspaceId: eventType.workspaceId, hostId: eventType.ownerId, status: { in: activeStatuses }, startAt: { lt: rangeEnd }, endAt: { gt: rangeStart } },
+    select: { startAt: true, endAt: true, bufferBeforeMinutes: true, bufferAfterMinutes: true },
+  });
+  return bookings.map((item) => ({ start: DateTime.fromJSDate(item.startAt).minus({ minutes: item.bufferBeforeMinutes }).toJSDate(), end: DateTime.fromJSDate(item.endAt).plus({ minutes: item.bufferAfterMinutes }).toJSDate() }));
+}
+
 export async function listPublicSlots(slug: string, from: Date, to: Date, outputTimeZone: string, calendar: CalendarService = getCalendarService(), durationId?: string, excludeBookingId?: string, allowInactiveDuration = false, allowInactiveEvent = false, excludeProviderEventId?: string, bookingWindowDaysOverride?: number, durationMinutesOverride?: number, bufferBeforeOverride?: number, bufferAfterOverride?: number, busyProviderOverride?: "google" | "local") {
   const eventType = await getEventTypeForSlotsBySlug(slug, !allowInactiveEvent);
   const duration = (durationId ? eventType.durations.find((item) => item.id === durationId) : eventType.durations.find((item) => item.isDefault))
@@ -54,34 +74,31 @@ export async function listPublicSlots(slug: string, from: Date, to: Date, output
   const effectiveBufferBefore = bufferBeforeOverride ?? eventType.bufferBeforeMinutes; const effectiveBufferAfter = bufferAfterOverride ?? eventType.bufferAfterMinutes;
   const providerFrom = DateTime.fromJSDate(from).minus({ minutes: effectiveBufferBefore }).toJSDate();
   const providerTo = DateTime.fromJSDate(to).plus({ minutes: effectiveBufferAfter }).toJSDate();
-  const providerBusyRequest = async () => {
+  const providerBusyRequest = async (): Promise<BusyInterval[]> => {
     // Promise branches get their own signed public context so another contextual
     // Prisma transaction cannot leave provider readiness workspace-less.
     enterPublicDatabaseContext(slug, eventType.workspaceId, eventType.id);
-    return (excludeProviderEventId || busyProviderOverride) && calendar.getBusyIntervalsExcludingEvent
-      ? calendar.getBusyIntervalsExcludingEvent(eventType.ownerId, providerFrom, providerTo, excludeProviderEventId ?? "__tempocove_no_excluded_event__", busyProviderOverride, eventType.workspaceId)
-      : calendar.getBusyIntervals(eventType.ownerId, providerFrom, providerTo, eventType.workspaceId);
+    try {
+      return await ((excludeProviderEventId || busyProviderOverride) && calendar.getBusyIntervalsExcludingEvent
+        ? calendar.getBusyIntervalsExcludingEvent(eventType.ownerId, providerFrom, providerTo, excludeProviderEventId ?? "__tempocove_no_excluded_event__", busyProviderOverride, eventType.workspaceId)
+        : calendar.getBusyIntervals(eventType.ownerId, providerFrom, providerTo, eventType.workspaceId));
+    } catch (error) {
+      // The database is the authority for the schedule and for booked time. Provider busy time only adds
+      // blocks the host typed straight into Google Calendar, so a provider failure is logged and the slots
+      // are served from the database rather than taking the booking page down with it.
+      structuredLog("warn", { event: "provider_busy_unavailable", kind: "public_slots", code: providerErrorCode(error) || (error instanceof Error ? error.message : "UNKNOWN") });
+      return [];
+    }
   };
-  const bookingRangeStart = DateTime.fromJSDate(from).minus({ minutes: effectiveBufferBefore + MAX_VALIDATED_BOOKING_BUFFER_MINUTES }).toJSDate();
-  const bookingRangeEnd = DateTime.fromJSDate(to).plus({ minutes: effectiveBufferAfter + MAX_VALIDATED_BOOKING_BUFFER_MINUTES }).toJSDate();
-  const [schedule, bookings, providerBusy] = await Promise.all([
+  const [schedule, booked, providerBusy] = await Promise.all([
     getAvailability(eventType.workspaceId, eventType.ownerId, eventType.owner.timeZone, { from, to }),
-    db.booking.findMany({
-      where: { id: excludeBookingId ? { not: excludeBookingId } : undefined, workspaceId: eventType.workspaceId, hostId: eventType.ownerId, status: { in: activeStatuses }, startAt: { lt: bookingRangeEnd }, endAt: { gt: bookingRangeStart } },
-      select: { startAt: true, endAt: true, bufferBeforeMinutes: true, bufferAfterMinutes: true },
-    }),
+    hostBookedIntervals(eventType, providerFrom, providerTo, excludeBookingId),
     providerBusyRequest(),
   ]);
   return generateSlots({
     eventType: { ...eventType, bookingWindowDays: bookingWindowDaysOverride ?? eventType.bookingWindowDays, durationId: duration.id, durationMinutes: durationMinutesOverride ?? duration.durationMinutes, bufferBeforeMinutes: effectiveBufferBefore, bufferAfterMinutes: effectiveBufferAfter, priceCents: duration.priceCents, currency: duration.currency },
     schedule,
-    busy: [
-      ...bookings.map((item) => ({
-        start: DateTime.fromJSDate(item.startAt).minus({ minutes: item.bufferBeforeMinutes }).toJSDate(),
-        end: DateTime.fromJSDate(item.endAt).plus({ minutes: item.bufferAfterMinutes }).toJSDate(),
-      })),
-      ...providerBusy,
-    ],
+    busy: [...booked, ...providerBusy],
     from, to, outputTimeZone,
   });
 }

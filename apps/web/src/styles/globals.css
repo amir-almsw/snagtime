@@ -101,3 +101,4 @@ a:focus-visible,button:focus-visible,[role=button]:focus-visible,[role=tab]:focu
 
 /* Live preview of the chosen service colour in the editor topbar; the swatches themselves already render, this is the only place the choice is reflected while editing. */
 .service-color-dot{width:12px;height:12px;border-radius:50%;flex:0 0 12px;box-shadow:0 0 0 1px var(--line)}
+a.back-link{text-decoration:none;width:fit-content}

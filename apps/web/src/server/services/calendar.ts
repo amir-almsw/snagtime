@@ -405,20 +405,24 @@ class FallbackCalendarService implements CalendarService {
   private readonly google = new GoogleCalendarService();
   private readonly proofGoogle = new ProofGoogleCalendarService();
   private readonly local = new LocalCalendarService();
-  private async service(userId: string, workspaceId?: string) {
+  // Availability is served from the database (hostBookedIntervals in bookings.ts). Provider busy time is a
+  // supplementary source for blocks the host typed straight into Google Calendar, so a Google that is
+  // configured but not connected contributes no busy time instead of failing the read, and a booking made
+  // in that state is recorded as local so its mirror is never attempted against missing credentials.
+  // Mutations never take this path: bookingService() still fails closed on the provider recorded at booking time.
+  private async busySource(userId: string, workspaceId?: string): Promise<CalendarService | null> {
     if (process.env.CALENDAR_PROVIDER === "local" && process.env.NODE_ENV !== "production") return this.local;
-    if (process.env.CALENDAR_PROVIDER !== "google" || !await googleCalendarReady(userId, workspaceId)) throw new AppError("GOOGLE_CALENDAR_RETRY", "This workspace requires a live Google Calendar connection before availability can be trusted.", 503);
+    if (process.env.CALENDAR_PROVIDER !== "google" || !await googleCalendarReady(userId, workspaceId)) return null;
     return providerProofMode() ? this.proofGoogle : this.google;
   }
-  async getBusyIntervals(userId: string, timeMin: Date, timeMax: Date, workspaceId?: string) { return (await this.service(userId, workspaceId)).getBusyIntervals(userId, timeMin, timeMax, workspaceId); }
+  async getBusyIntervals(userId: string, timeMin: Date, timeMax: Date, workspaceId?: string) { const source = await this.busySource(userId, workspaceId); return source ? source.getBusyIntervals(userId, timeMin, timeMax, workspaceId) : []; }
   async getBusyIntervalsExcludingEvent(userId: string, timeMin: Date, timeMax: Date, excludedEventId: string, requiredProvider?: "google" | "local", workspaceId?: string) {
-    let service: CalendarService;
-    if (requiredProvider === "google") {
-      if (!await googleCredentialsReady(userId, workspaceId)) throw new AppError("GOOGLE_CALENDAR_RETRY", "This accepted Google booking requires its configured provider for conflict checks.", 503);
-      service = providerProofMode() ? this.proofGoogle : this.google;
-    } else if (requiredProvider === "local") service = this.local;
-    else service = await this.service(userId, workspaceId);
-    return service.getBusyIntervalsExcludingEvent?.(userId, timeMin, timeMax, excludedEventId, requiredProvider, workspaceId) ?? service.getBusyIntervals(userId, timeMin, timeMax, workspaceId);
+    let source: CalendarService | null;
+    if (requiredProvider === "google") source = await googleCredentialsReady(userId, workspaceId) ? providerProofMode() ? this.proofGoogle : this.google : null;
+    else if (requiredProvider === "local") source = this.local;
+    else source = await this.busySource(userId, workspaceId);
+    if (!source) return [];
+    return source.getBusyIntervalsExcludingEvent?.(userId, timeMin, timeMax, excludedEventId, requiredProvider, workspaceId) ?? source.getBusyIntervals(userId, timeMin, timeMax, workspaceId);
   }
   private async bookingService(booking: CalendarBooking) {
     if (booking.calendarProviderSnapshot === "provider_recovery_required") throw new AppError("CALENDAR_PROVIDER_RECOVERY_REQUIRED", "This upgraded booking requires provider-lineage reconciliation before calendar mutation.", 503);
@@ -435,7 +439,7 @@ class FallbackCalendarService implements CalendarService {
     }
     return (await this.bookingService(booking)).deleteBookingEvent(booking);
   }
-  async providerKind(userId: string, workspaceId?: string) { const service: CalendarService = await this.service(userId, workspaceId); return await service.providerKind?.(userId, workspaceId) ?? "google" as const; }
+  async providerKind(userId: string, workspaceId?: string) { const source = await this.busySource(userId, workspaceId); if (!source) return "local" as const; return (await source.providerKind?.(userId, workspaceId)) ?? "google" as const; }
   async candidateEventId(booking: CalendarBooking) { return booking.calendarProviderSnapshot === "google" || booking.calendarProviderSnapshot === "provider_recovery_required" ? providerCalendarEventId(booking.id) : null; }
 }
 

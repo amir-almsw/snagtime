@@ -50,6 +50,8 @@ SnagTime requests:
 
 Verify the integration status reports complete, create a test booking, confirm the event appears on the organizer calendar, then reschedule and cancel it.
 
+Availability shown to clients is computed from the studio schedule and the existing bookings in the database, never from Google. When connected, Google Calendar mirrors each appointment to the studio calendar and adds any blocks entered directly in Google as extra busy time. When it is disconnected or unreachable, clients keep booking from the database, the slot request logs `provider_busy_unavailable`, new bookings are recorded as local and are not mirrored, and the integrations page shows the reconnect state.
+
 ## Transactional email
 
 Google Calendar invitations are sent by Google from the connected calendar. SnagTime's organizer notifications, invitee confirmations, workspace invitations, verification messages, and recovery messages use your SMTP provider.
