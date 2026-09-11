@@ -68,6 +68,14 @@ export async function hostBookedIntervals(eventType: { id: string; workspaceId: 
 
 export async function listPublicSlots(slug: string, from: Date, to: Date, outputTimeZone: string, calendar: CalendarService = getCalendarService(), durationId?: string, excludeBookingId?: string, allowInactiveDuration = false, allowInactiveEvent = false, excludeProviderEventId?: string, bookingWindowDaysOverride?: number, durationMinutesOverride?: number, bufferBeforeOverride?: number, bufferAfterOverride?: number, busyProviderOverride?: "google" | "local") {
   const eventType = await getEventTypeForSlotsBySlug(slug, !allowInactiveEvent);
+  // getEventTypeForSlotsBySlug enters a slug-only context before its first await -- which does reach us,
+  // replacing whatever the caller had -- and then re-enters the full one after that await, where it is
+  // discarded the moment it returns (see db-context.ts). So without this line we resume holding a context
+  // whose workspace id is empty, and tempocove_public_host_busy below, which matches the event on
+  // e."workspaceId"=current_setting('tempocove.workspace_id'), finds nothing. It returns zero rows rather
+  // than an error, so every booked slot silently stayed on the public list. Entered in this function's own
+  // frame so hostBookedIntervals and the duration lookup below both see it.
+  enterPublicDatabaseContext(slug, eventType.workspaceId, eventType.id);
   const duration = (durationId ? eventType.durations.find((item) => item.id === durationId) : eventType.durations.find((item) => item.isDefault))
     ?? (durationId && allowInactiveDuration ? await db.eventDuration.findFirst({ where: { id: durationId, eventTypeId: eventType.id } }) : null);
   if (!duration) throw notFound("Duration option");

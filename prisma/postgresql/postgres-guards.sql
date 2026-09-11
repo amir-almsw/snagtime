@@ -650,6 +650,33 @@ USING (tempocove_context_valid('capability') AND current_setting('tempocove.acti
 WITH CHECK (tempocove_context_valid('capability') AND current_setting('tempocove.action',true) IN ('booking_recovery_request','booking_recovery_consume') AND "bookingId"=current_setting('tempocove.subject',true));
 CREATE POLICY app_capability_recovery_token ON "BookingRecoveryToken" FOR SELECT TO tempocove_app
 USING (tempocove_context_valid('capability') AND current_setting('tempocove.action',true)='booking_recovery_resolve' AND id=current_setting('tempocove.subject',true));
+-- A client cancelling or rescheduling from their own manage session runs in capability mode under
+-- action 'booking_write', which app_capability_recovery above does not cover: it lists only the two
+-- booking_recovery_* actions. enqueueBookingEmail() revokes the booking's live recovery token and
+-- issues its replacement inside that same transaction, and supersedeBookingReminders() retires the
+-- pending reminder, so without these three every client-initiated cancel and reschedule fails. The
+-- INSERT raised a row-level security violation, surfacing as a 500 the client could do nothing with,
+-- and the two UPDATEs are worse for being silent: an UPDATE that matches no row is not an error, so
+-- the superseded manage link stayed live and the client was still reminded to attend an appointment
+-- they had just cancelled. Scope is the signed subject booking, exactly as the occupancy and outbox
+-- capability policies above, and a new token must additionally carry that booking's own workspace and
+-- invitee address, so a capability can only ever reissue the link for the booking it already holds.
+CREATE POLICY app_capability_recovery_write ON "BookingRecoveryToken" FOR INSERT TO tempocove_app WITH CHECK (
+  current_setting('tempocove.action',true)='booking_write' AND tempocove_capability_booking("bookingId")
+  AND EXISTS(SELECT 1 FROM "Booking" b WHERE b.id="BookingRecoveryToken"."bookingId" AND b."workspaceId"="BookingRecoveryToken"."workspaceId" AND lower(b."inviteeEmail")=lower("BookingRecoveryToken".email)));
+CREATE POLICY app_capability_recovery_revoke ON "BookingRecoveryToken" FOR UPDATE TO tempocove_app
+USING (current_setting('tempocove.action',true)='booking_write' AND tempocove_capability_booking("bookingId"))
+WITH CHECK (current_setting('tempocove.action',true)='booking_write' AND tempocove_capability_booking("bookingId"));
+-- Paired with the INSERT above for the same reason app_capability_email_read is paired with
+-- app_capability_email: Prisma writes with a RETURNING clause, and PostgreSQL applies SELECT policies
+-- to the rows an INSERT returns. Without this the write itself passes its WITH CHECK and the statement
+-- still fails with the identical "new row violates row-level security policy" message, which reads like
+-- the INSERT policy is wrong when what is actually missing is the read.
+CREATE POLICY app_capability_recovery_read ON "BookingRecoveryToken" FOR SELECT TO tempocove_app
+USING (current_setting('tempocove.action',true)='booking_write' AND tempocove_capability_booking("bookingId"));
+CREATE POLICY app_capability_email_supersede ON "EmailOutbox" FOR UPDATE TO tempocove_app
+USING (current_setting('tempocove.action',true)='booking_write' AND "bookingId" IS NOT NULL AND tempocove_capability_booking("bookingId"))
+WITH CHECK (current_setting('tempocove.action',true)='booking_write' AND "bookingId" IS NOT NULL AND tempocove_capability_booking("bookingId"));
 CREATE POLICY app_capability_account ON "AccountActionToken" FOR SELECT TO tempocove_app
 USING (tempocove_context_valid('capability') AND current_setting('tempocove.action',true)='account_token_resolve' AND id=current_setting('tempocove.subject',true));
 CREATE POLICY app_invitation_authority ON "WorkspaceInvitation" FOR SELECT TO tempocove_app USING (

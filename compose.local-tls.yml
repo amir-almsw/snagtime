@@ -8,29 +8,16 @@
 # return 401. This overlay puts Caddy in front on the canonical hostnames with a locally issued
 # certificate, which is the same shape as the production ingress.
 services:
+  # Only the deltas from the production caddy service: a locally issued certificate instead of
+  # Let's Encrypt, and its own data volume. Image, command, secrets and the header_up lines are
+  # inherited from compose.production.yml so the two ingresses cannot drift apart.
   caddy:
-    image: caddy:2-alpine
     environment:
-      BOOK_HOST: ${BOOK_HOST:?set the local booking hostname, e.g. book.localhost}
-      ADMIN_HOST: ${ADMIN_HOST:?set the local admin hostname, e.g. admin.localhost}
-    # compose exposes secrets as files only, but the Caddyfile needs the shared secret as an
-    # env placeholder. Read it in, then exec caddy so it stays PID 1 and still receives signals.
-    command: ["sh","-c","export PROXY_SHARED_SECRET=\"$$(cat /run/secrets/proxy_shared_secret)\"; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
-    secrets: [proxy_shared_secret]
+      ACME_EMAIL: local@invalid
     volumes:
       - ./infrastructure/caddy/Caddyfile.local:/etc/caddy/Caddyfile:ro
       # Persists the local CA between restarts, so the root you trusted once stays valid.
       - caddy_local_data:/data
-    ports: ["80:80", "443:443"]
-    depends_on:
-      web-book: { condition: service_healthy }
-      web-admin: { condition: service_healthy }
-    restart: unless-stopped
-    security_opt: [no-new-privileges:true]
-    cap_drop: [ALL]
-    # Dropping ALL also drops the ability of root to bind 80 and 443 inside the container.
-    cap_add: [NET_BIND_SERVICE]
-    deploy: { resources: { limits: { cpus: "1", memory: 256M } } }
   # Bound to loopback only, and solely so the one-off operator steps (db:provision:postgres-logins
   # and db:bootstrap-admin) can reach the database from the host. Production never publishes this.
   postgres: { ports: ["127.0.0.1:5432:5432"] }

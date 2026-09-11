@@ -4,6 +4,7 @@ import { assertSameOrigin } from "@/server/auth/session";
 import { createGateToken, gateCookieName, gateCookieOptions, verifyGatePassword } from "@/server/auth/client-gate";
 import { clientGateInput } from "@/server/validation";
 import { clientAddress, enforceRateLimit } from "@/server/rate-limit";
+import { structuredLog } from "@/server/observability";
 
 export async function POST(request: Request) {
   try {
@@ -13,7 +14,9 @@ export async function POST(request: Request) {
     await enforceRateLimit("gate:global", 200, 3_600_000);
     const { password } = clientGateInput.parse(await jsonBody(request));
     if (!(await verifyGatePassword(password))) {
-      console.warn("client_gate.password_rejected", { address: clientAddress(request) });
+      // structuredLog drops every key outside its allowlist and strips CR/LF; the raw address is not in it.
+      // Repetition from one source is already the rate limiter's job, so the event alone is what gets recorded.
+      structuredLog("warn", { event: "client_gate.password_rejected", kind: "gate" });
       throw new AppError("AUTHENTICATION_FAILED", "That password is not correct.", 401);
     }
     const response = ok({ authorized: true as const });

@@ -54,7 +54,12 @@ const forbidden = [
   /postgres(?:ql)?:\/\/[^\s:/]+:[^\s@]+@/i,
 ]; const findings=[];
 const documentedCiPlaceholders=["ci-only-ephemeral","CI-App-Database-Password-00000000000001","CI-Worker-Database-Password-0000000001","CI-Monitor-Database-Password-000000001","CI-Migration-Database-Password-0000001"];
-const sanitizeCiPlaceholders=(value)=>documentedCiPlaceholders.reduce((current,placeholder)=>current.replaceAll(placeholder,""),value);
+// Connection-string templates in the operator scripts are not credentials: the password position holds a
+// documented literal (PW), the one-letter stand-in verify-production-image.sh feeds the config contract, or a
+// shell interpolation the script fills in at run time. Drop the password position on those three shapes only,
+// so the embedded-credential rule keeps its teeth for a real secret.
+const templateCredential=/(postgres(?:ql)?:\/\/[^\s:/]+):(?:PW|p|\$\{[A-Za-z_][A-Za-z0-9_]*\})@/gi;
+const sanitizeCiPlaceholders=(value)=>documentedCiPlaceholders.reduce((current,placeholder)=>current.replaceAll(placeholder,""),value).replace(templateCredential,"$1@");
 const allowedHighEntropy = /(?:sha256|digest|hash|integrity|example|invalid|placeholder|replace-with|test|demo|not-for-production|_key|_idx|000000|\$\{\{|[A-Fa-f0-9]{48,})/i;
 const highEntropyLiteral = /["']([A-Za-z0-9+\/_=-]{48,})["']/g;
 function containsUndispositionedHighEntropy(value) { for (const match of value.matchAll(highEntropyLiteral)) if (!allowedHighEntropy.test(match[1])) return true; return false; }

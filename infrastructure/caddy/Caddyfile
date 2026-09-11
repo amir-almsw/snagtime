@@ -1,0 +1,64 @@
+# Production ingress. The local counterpart is Caddyfile.local, which differs only in issuing from
+# Caddy's own CA instead of Let's Encrypt -- keep the two in step so what you test is what you ship.
+#
+# This is not an optional convenience. The app trusts x-tempocove-proxy-secret as proof that a request
+# arrived through ingress, and only then reads the first x-forwarded-for entry as the client address.
+# With no proxy in front, clientAddress() collapses every visitor on the internet into the single
+# "global-untrusted-proxy" bucket: twelve admin logins per fifteen minutes and five gate attempts per
+# five minutes become a global budget that anyone can exhaust for everybody.
+
+{
+	# ACME account contact. Let's Encrypt uses it for expiry and revocation notices.
+	email {$ACME_EMAIL}
+	# No admin API: nothing should be able to reconfigure ingress at runtime, and on a VPS its
+	# default localhost:2019 endpoint is reachable by anything else sharing the host.
+	admin off
+}
+
+(app_headers) {
+	# `header_up Name value` SETS the header, replacing whatever the client sent. That replacement is
+	# the entire defence -- a proxy that forwards the client's own copy of either header lets a caller
+	# forge its source address and walk straight past the per-IP limits.
+	#
+	# Do NOT pair these with a `header_up -Name` delete line. Caddy applies deletions after sets, so
+	# the delete removes the value just injected and the upstream receives nothing. That fails closed
+	# rather than open, but it puts every visitor back in the one shared bucket described above.
+	header_up X-Tempocove-Proxy-Secret {env.PROXY_SHARED_SECRET}
+	header_up X-Forwarded-For {remote_host}
+}
+
+(security_headers) {
+	# The app itself sets only Referrer-Policy. These are the headers that are safe to add without
+	# knowing anything about page internals.
+	header {
+		# Only meaningful over HTTPS, which is the only way this stack is reachable. Note that
+		# max-age is sticky in browsers: get the hostname right before enabling, and do not add
+		# `preload` until you are certain, because that decision is effectively irreversible.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		# Clickjacking: the admin dashboard and the client gate must never be framed. frame-ancestors
+		# is the modern control and X-Frame-Options covers clients that predate it. Deliberately no
+		# script-src or style-src here -- app/layout.tsx carries an inline theme bootstrap script and
+		# several components use inline style attributes for operator branding, so a content policy
+		# needs a nonce or hash pass in the app before it can be turned on without breaking the page.
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		# Clipboard-write must stay permitted: the dashboard's copy-booking-link control uses it.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		-Server
+	}
+}
+
+{$BOOK_HOST} {
+	import security_headers
+	reverse_proxy web-book:3000 {
+		import app_headers
+	}
+}
+
+{$ADMIN_HOST} {
+	import security_headers
+	reverse_proxy web-admin:3000 {
+		import app_headers
+	}
+}

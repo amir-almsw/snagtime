@@ -7,6 +7,13 @@ describe("origin surface enforcement", () => {
       expect(surfaceAllows("book", path), path).toBe(false);
     }
   });
+  it("keeps the organizer booking collection off the booking origin without hiding the manage routes", () => {
+    expect(surfaceAllows("book", "/api/bookings")).toBe(false);
+    expect(surfaceAllows("admin", "/api/bookings")).toBe(true);
+    for (const path of ["/api/bookings/abc", "/api/bookings/abc/slots", "/api/bookings/abc/manage-session", "/api/bookings/manage-link"]) {
+      expect(surfaceAllows("book", path), path).toBe(true);
+    }
+  });
   it("serves the gate, booking, and manage surfaces on the booking origin", () => {
     for (const path of ["/", "/gate", "/book/strategy-call", "/book/strategy-call/confirmation", "/manage/abc/reschedule", "/api/gate", "/api/public/strategy-call/slots", "/api/bookings/abc", "/api/bookings/abc/manage-session", "/api/bookings/manage-link", "/api/health/ready"]) {
       expect(surfaceAllows("book", path), path).toBe(true);

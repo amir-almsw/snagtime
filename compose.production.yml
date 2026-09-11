@@ -1,4 +1,9 @@
 name: snagtime-production
+# Docker's default json-file driver grows without bound. The worker logs a tick every few seconds, so
+# an unrotated host fills its disk and takes PostgreSQL down with it. Every service opts in below.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
 services:
   postgres:
     build: { context: ., dockerfile: infrastructure/postgresql/Dockerfile }
@@ -9,6 +14,7 @@ services:
     secrets: [postgres_owner_password,postgres_server_cert,postgres_server_key,postgres_ca_cert]
     volumes: [postgres_data:/var/lib/postgresql/18/docker]
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U tempocove_owner -d tempocove"], interval: 10s, timeout: 5s, retries: 12 }
+    logging: *logging
     restart: unless-stopped
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
@@ -28,6 +34,7 @@ services:
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
+    logging: *logging
   # The booking and admin origins are the same image with different SURFACE values. SURFACE must never
   # be unset in production: unset means single-origin mode, which would serve the dashboard on the
   # public booking host with no error. The production contract rejects anything but "book" or "admin".
@@ -44,6 +51,7 @@ services:
       restart: unless-stopped
       expose: ["3000"]
       healthcheck: { test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 15s, timeout: 4s, retries: 6 }
+      logging: *logging
       deploy: { resources: { limits: { cpus: "1", memory: 512M } } }
     environment: &app_env
       NODE_ENV: production
@@ -94,6 +102,37 @@ services:
       SURFACE: admin
       NEXT_PUBLIC_APP_URL: ${ADMIN_APP_URL:?set canonical HTTPS admin origin}
       BUILD_ID: ${ADMIN_BUILD_ID:?set immutable admin build identity}
+  # Ingress is part of the deployment, not something bolted on afterwards: the rate limiter is only
+  # meaningful when a trusted proxy injects x-tempocove-proxy-secret and rewrites x-forwarded-for, and
+  # nothing else in this file terminates TLS. An operator fronting the stack with their own proxy can
+  # disable this one with `--scale caddy=0`, but must reproduce both header_up lines in Caddyfile.
+  caddy:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    environment:
+      BOOK_HOST: ${BOOK_HOST:?set the public booking hostname, e.g. book.your-domain.example}
+      ADMIN_HOST: ${ADMIN_HOST:?set the public admin hostname, e.g. admin.your-domain.example}
+      ACME_EMAIL: ${ACME_EMAIL:?set the ACME contact address for certificate notices}
+    # compose exposes secrets as files only, but the Caddyfile needs the shared secret as an env
+    # placeholder. Read it in, then exec caddy so it stays PID 1 and still receives signals.
+    command: ["sh","-c","export PROXY_SHARED_SECRET=\"$$(cat /run/secrets/proxy_shared_secret)\"; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
+    secrets: [proxy_shared_secret]
+    volumes:
+      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Issued certificates and the ACME account key. Losing this volume means re-issuing on restart,
+      # which burns Let's Encrypt rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    ports: ["80:80", "443:443"]
+    depends_on:
+      web-book: { condition: service_healthy }
+      web-admin: { condition: service_healthy }
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    # Dropping ALL also drops root's ability to bind 80 and 443 inside the container.
+    cap_add: [NET_BIND_SERVICE]
+    logging: *logging
+    deploy: { resources: { limits: { cpus: "1", memory: 256M } } }
   worker:
     build: { context: ., target: runtime, args: { BUILD_ID: "${BOOK_BUILD_ID:?set immutable booking build identity}", NEXT_PUBLIC_APP_URL: "${BOOK_APP_URL:?set canonical HTTPS booking origin}" } }
     command: ["node","dist/worker.mjs"]
@@ -130,6 +169,17 @@ services:
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
+    logging: *logging
+    # A wedged-but-alive worker is the failure restart:unless-stopped cannot see. The loop touches
+    # /tmp/worker-alive after every settled tick, so a stale file means the poll stopped advancing.
+    # Compose does not restart on unhealthy by itself -- this makes the state visible to `docker ps`
+    # and to whatever supervises the host; the web containers already go unready off the same stall.
+    healthcheck:
+      test: ["CMD", "node", "-e", "const{statSync}=require('node:fs');const max=Math.max(15000,Number(process.env.OUTBOX_POLL_INTERVAL_MS||5000)*3);process.exit(Date.now()-statSync('/tmp/worker-alive').mtimeMs<max?0:1)"]
+      interval: 15s
+      timeout: 4s
+      retries: 4
+      start_period: 30s
     restart: unless-stopped
     deploy: { resources: { limits: { cpus: "1", memory: 512M } } }
 # File-backed secrets for a single-VPS `docker compose` deployment. Swarm-style external secrets
@@ -159,3 +209,5 @@ secrets:
   postgres_ca_cert: { file: ./secrets/postgres_ca_cert }
 volumes:
   postgres_data: {}
+  caddy_data: {}
+  caddy_config: {}
