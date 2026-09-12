@@ -22,3 +22,4 @@ runtime/
 /secrets/
 test.env
 compose.local-test.yml
+production.env
