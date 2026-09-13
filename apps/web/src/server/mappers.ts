@@ -32,7 +32,7 @@ export function mapEventType(eventType: EventWithOptions): EventTypeSummary {
 type BookingWithSummary = Booking & { eventType: { name: string }; host?: { name: string }; answers?: StoredAnswer[] };
 export function mapBooking(booking: BookingWithSummary): BookingSummary {
   return {
-    id: booking.id, eventTypeId: booking.eventTypeId, eventTypeName: booking.eventTitleSnapshot || booking.eventType.name,
+    id: booking.id, reference: booking.reference ?? null, eventTypeId: booking.eventTypeId, eventTypeName: booking.eventTitleSnapshot || booking.eventType.name,
     eventTitleSnapshot: booking.eventTitleSnapshot || booking.eventType.name,
     locationType: booking.locationTypeSnapshot as BookingSummary["locationType"], locationValue: booking.locationValueSnapshot,
     calendarProvider: booking.calendarProviderSnapshot as BookingSummary["calendarProvider"],

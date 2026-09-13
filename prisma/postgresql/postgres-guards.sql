@@ -524,6 +524,27 @@ $fn$;
 ALTER FUNCTION tempocove_public_host_busy(text,timestamp,timestamp,text) OWNER TO tempocove_rls_verifier;
 REVOKE ALL ON FUNCTION tempocove_public_host_busy(text,timestamp,timestamp,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tempocove_public_host_busy(text,timestamp,timestamp,text) TO tempocove_app;
+-- "Manage my appointment" without the emailed link: the client offers a reference or their address and a
+-- fresh link is posted to whatever that resolves to. No policy can express this, because the caller does
+-- not yet know the booking id that every capability policy keys on -- so it is a definer function with the
+-- narrowest possible projection: one id and the address the link will be sent to, never a row.
+--
+-- The subject binding is what stops it being a lookup oracle: the signed context must already name the
+-- same value being asked about, so a caller cannot iterate references or addresses under one context.
+-- Only CONFIRMED bookings that have not finished are eligible; a concluded appointment answers nothing.
+CREATE OR REPLACE FUNCTION tempocove_booking_manage_lookup(p_reference text,p_email text,p_now timestamp)
+RETURNS TABLE(booking_id text,invitee_email text) LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+  SELECT b."id",lower(b."inviteeEmail") FROM "Booking" b
+  WHERE tempocove_context_valid('capability') AND current_setting('tempocove.action',true)='booking_manage_lookup'
+    AND b."status"='CONFIRMED' AND b."endAt">p_now
+    AND ((p_reference<>'' AND b."reference"=p_reference AND current_setting('tempocove.subject',true)=p_reference)
+      OR (p_email<>'' AND lower(b."inviteeEmail")=p_email AND current_setting('tempocove.subject',true)=p_email))
+  ORDER BY b."startAt"
+  LIMIT 1
+$fn$;
+ALTER FUNCTION tempocove_booking_manage_lookup(text,text,timestamp) OWNER TO tempocove_rls_verifier;
+REVOKE ALL ON FUNCTION tempocove_booking_manage_lookup(text,text,timestamp) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tempocove_booking_manage_lookup(text,text,timestamp) TO tempocove_app;
 CREATE POLICY app_public_occupancy_claim ON "BookingOccupancy" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_create' AND tempocove_public_booking_claim("bookingId"));
 CREATE POLICY app_public_occupancy_read ON "BookingOccupancy" FOR SELECT TO tempocove_app USING (tempocove_public_booking_claim("bookingId"));
 CREATE POLICY app_public_outbox_claim ON "IntegrationOutbox" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_create' AND tempocove_public_booking_claim("bookingId") AND "workspaceId"=current_setting('tempocove.workspace_id',true) AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL);

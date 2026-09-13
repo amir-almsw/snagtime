@@ -49,7 +49,7 @@ export async function enqueueEmail(tx: Transaction, input: EnqueueEmail) {
   } });
 }
 
-type BookingEmailSnapshot = { id: string; workspaceId: string; hostId: string; inviteeName: string; inviteeEmail: string; inviteeTimeZone: string; eventTitleSnapshot: string; startAt: Date; endAt: Date; priceCents: number; currency: string; stripePaymentStatus: string | null; refundStatus?: string; mutationVersion: number; calendarProviderSnapshot?: string | null };
+type BookingEmailSnapshot = { id: string; reference?: string | null; workspaceId: string; hostId: string; inviteeName: string; inviteeEmail: string; inviteeTimeZone: string; eventTitleSnapshot: string; startAt: Date; endAt: Date; priceCents: number; currency: string; stripePaymentStatus: string | null; refundStatus?: string; mutationVersion: number; calendarProviderSnapshot?: string | null };
 // When Google Calendar carries the booking, its invitation IS the client's confirmation. The app’s own
 // copy is deferred rather than dropped: a successful provider notice supersedes it (outbox.ts), and a
 // provider failure lets it deliver as the fallback so a Google outage never leaves clients unnotified.
@@ -69,7 +69,7 @@ export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmail
   await tx.bookingRecoveryToken.create({ data: { id, workspaceId: booking.workspaceId, bookingId: booking.id, email: booking.inviteeEmail.toLowerCase(), tokenHash: authority.tokenHash, expiresAt } });
   const action = kind === "BOOKING_CANCELLED" ? "Your appointment is canceled" : kind === "BOOKING_RESCHEDULED" ? "Your appointment has moved" : "You’re booked";
   await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: booking.inviteeEmail, subject: `${action}: ${booking.eventTitleSnapshot}`,
-    payload: { recoveryTokenId: id, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
+    payload: { recoveryTokenId: id, reference: booking.reference ?? null, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
     idempotencyKey: `email:booking:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion,
     nextAttemptAt: booking.calendarProviderSnapshot === "google" ? new Date(now.getTime() + GOOGLE_INVITE_FALLBACK_MS) : undefined });
   const host = await tx.user.findUnique({ where: { id: booking.hostId }, select: { email: true, timeZone: true } });
@@ -95,7 +95,7 @@ export async function enqueueBookingReminder(tx: Transaction, booking: BookingEm
   const expiresAt = new Date(Math.max(now.getTime() + 7 * 24 * 60 * 60_000, booking.endAt.getTime() + 30 * 24 * 60 * 60_000));
   await tx.bookingRecoveryToken.create({ data: { id, workspaceId: booking.workspaceId, bookingId: booking.id, email: booking.inviteeEmail.toLowerCase(), tokenHash: authority.tokenHash, expiresAt } });
   await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind: "BOOKING_REMINDER", recipientEmail: booking.inviteeEmail, subject: `See you soon: ${booking.eventTitleSnapshot}`,
-    payload: { recoveryTokenId: id, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
+    payload: { recoveryTokenId: id, reference: booking.reference ?? null, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
     idempotencyKey: `email:booking:REMINDER:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion, nextAttemptAt: sendAt });
 }
 // Called inside the cancel and reschedule transactions so a client who cancels is never reminded to attend.
@@ -148,10 +148,13 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
   if (row.kind === "BOOKING_REMINDER") {
     const booking = await db.booking.findFirst({ where: { id: recovery.bookingId, workspaceId: row.workspaceId }, select: { status: true } });
     if (booking?.status !== "CONFIRMED") return null;
-    return { subject: row.subjectSnapshot, text: `A friendly reminder: your ${String(payload.eventTitle)} is coming up on ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Need to reschedule or cancel? ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
+    return { subject: row.subjectSnapshot, text: `A friendly reminder: your ${String(payload.eventTitle)} is coming up on ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Need to reschedule or cancel? ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}${payload.reference ? ` Your booking reference is ${String(payload.reference)}.` : ""}` };
   }
+  // Quoted so a client can find the appointment again from /manage without the link above -- the only
+  // route back in once a one-use recovery link has been spent.
+  const referenceLine = payload.reference ? ` Your booking reference is ${String(payload.reference)}.` : "";
   const opening = row.kind === "BOOKING_CANCELLED" ? `Your ${String(payload.eventTitle)} is canceled. It was booked for` : row.kind === "BOOKING_RESCHEDULED" ? `Your ${String(payload.eventTitle)} has moved. We will see you` : `You are booked in for ${String(payload.eventTitle)}. We will see you`;
-  return { subject: row.subjectSnapshot, text: `${opening} ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Reschedule or cancel any time: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
+  return { subject: row.subjectSnapshot, text: `${opening} ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Reschedule or cancel any time: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}${referenceLine}` };
 }
 
 export class LocalInboxEmailProvider implements EmailProvider {

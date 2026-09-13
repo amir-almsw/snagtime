@@ -300,10 +300,15 @@ export async function bookingEventDescription(booking: CalendarBooking, now = ne
     const rendered = Array.isArray(value) ? value.join(", ") : typeof value === "boolean" ? (value ? "Yes" : "No") : String(value ?? "");
     if (rendered.trim()) lines.push(`${answer.questionLabel}: ${rendered.trim()}`);
   }
+  // A booking mirrored to Google supersedes its confirmation email when the invite lands, so for those
+  // clients this event is the only place the reference ever appears. Without it they would have no way
+  // back in but the link below, which is exactly what /manage exists to recover from.
+  if (booking.reference) lines.push(`Booking reference: ${booking.reference}`);
   const recovery = await db.bookingRecoveryToken.findFirst({ where: { bookingId: booking.id, consumedAt: null, revokedAt: null, expiresAt: { gt: now } }, orderBy: { createdAt: "desc" } });
   if (recovery) {
     const token = materializeActionToken(recovery.id, "BOOKING_RECOVERY", bookingTokenBinding(recovery.workspaceId, recovery.bookingId, recovery.email));
     lines.push(`Need to change or cancel? Use this link:\n${appBaseUrl()}/manage/${booking.id}/reschedule#recovery=${encodeURIComponent(token)}`);
+    lines.push(`Lost the link? Go to ${appBaseUrl()}/manage and enter your booking reference.`);
     lines.push("Declining this calendar invitation does NOT cancel the appointment. Use the link above, or contact the shop.");
   }
   return lines.join("\n\n") || undefined;

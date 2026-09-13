@@ -13,7 +13,9 @@ vi.mock("@/server/services/bookings", async (importOriginal) => {
 });
 import { db } from "@/server/db";
 import { manageCookieName } from "@/server/auth/capabilities";
+import { SESSION_COOKIE, createSessionForUser } from "@/server/auth/session";
 import { GET as getBooking } from "@/app/api/bookings/[id]/route";
+import { PATCH as acknowledgeManageSession } from "@/app/api/bookings/[id]/manage-session/route";
 
 describe("booking manage route database context", () => {
   afterEach(() => { vi.unstubAllEnvs(); seen.length = 0; });
@@ -36,5 +38,37 @@ describe("booking manage route database context", () => {
       expect(seen).toHaveLength(1);
       expect(seen[0]).toMatchObject({ mode: "capability", subject: bookingId });
     } finally { await db.booking.delete({ where: { id: bookingId } }); }
+  });
+});
+
+// The dashboard's Reschedule link and the client's emailed link render the same view, and that view
+// acknowledges the manage session on load. An organizer holds no manage cookie for the booking, so the
+// acknowledge answered 404 and the studio saw "Booking was not found" on every reschedule; cancel worked
+// only because that view never acknowledges.
+describe("organizer acknowledge on the shared manage view", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("treats a valid organizer session as nothing to acknowledge, and still fails closed without one", async () => {
+    vi.stubEnv("AUTH_SECRET", "manage-ack-test-secret-of-at-least-thirty-two-bytes");
+    const event = await db.eventType.findFirstOrThrow({ include: { durations: true } }); const duration = event.durations[0]!; const bookingId = randomUUID();
+    await db.booking.create({ data: {
+      id: bookingId, workspaceId: event.workspaceId, eventTypeId: event.id, hostId: event.ownerId, durationId: duration.id, durationMinutes: duration.durationMinutes,
+      inviteeName: "Organizer Ack", inviteeEmail: "organizer-ack@example.com", inviteeTimeZone: "Europe/Amsterdam", startAt: new Date("2099-08-26T09:00:00Z"), endAt: new Date("2099-08-26T09:30:00Z"), status: "CONFIRMED",
+      idempotencyKey: randomUUID(), requestFingerprint: randomUUID(), capabilityVersion: randomUUID(), manageExpiresAt: new Date("2099-09-26T00:00:00Z"),
+    } });
+    const url = `http://localhost:3000/api/bookings/${bookingId}/manage-session`;
+    const params = { params: Promise.resolve({ id: bookingId }) };
+    // Everything after the create lives inside the try: these suites share one SQLite database, so a
+    // throw between creating the fixture and the cleanup leaks a booking into every later test file.
+    try {
+      const token = await createSessionForUser(event.ownerId, undefined, false);
+      const organizer = await acknowledgeManageSession(new Request(url, { method: "PATCH", headers: { origin: "http://localhost:3000", cookie: `${SESSION_COOKIE}=${token}` } }), params);
+      expect(organizer.status).toBe(200);
+      await expect(organizer.json()).resolves.toMatchObject({ data: { acknowledged: true } });
+      // Neither an organizer session nor a manage cookie must still be refused, or the short circuit
+      // would have turned the acknowledge into an unauthenticated no-op for anyone who asked.
+      const anonymous = await acknowledgeManageSession(new Request(url, { method: "PATCH", headers: { origin: "http://localhost:3000" } }), params);
+      expect(anonymous.status).toBe(404);
+    } finally { await db.authSession.deleteMany({ where: { userId: event.ownerId } }); await db.booking.delete({ where: { id: bookingId } }); }
   });
 });

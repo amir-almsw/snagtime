@@ -90,6 +90,7 @@ export function mapBooking(item: BookingSummary, organizerTimeZone = item.invite
         : item.locationValue || "Custom location";
   return {
     id: item.id,
+    reference: item.reference,
     eventTypeId: item.eventTypeId,
     invitee: item.inviteeName,
     email: item.inviteeEmail,
@@ -149,6 +150,7 @@ export const frontendApi = {
   rescheduleBooking: snagTimeApi.rescheduleBooking,
   cancelBooking: snagTimeApi.cancelBooking,
   requestBookingManageLink: snagTimeApi.requestBookingManageLink,
+  requestBookingManageLookup: snagTimeApi.requestBookingManageLookup,
   consumeBookingManageLink: snagTimeApi.consumeBookingManageLink,
   getWorkspaceBranding: snagTimeApi.getWorkspaceBranding,
   updateWorkspaceBranding: snagTimeApi.updateWorkspaceBranding,

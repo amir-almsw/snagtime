@@ -80,6 +80,8 @@ export const snagTimeApi = {
   rescheduleBooking: (id: string, startAt: string) => request<BookingSummary>(`/api/bookings/${id}`, { method: "PATCH", body: JSON.stringify({ startAt }) }),
   cancelBooking: (id: string, reason?: string) => request<BookingSummary>(`/api/bookings/${id}`, { method: "DELETE", body: JSON.stringify({ reason }) }),
   requestBookingManageLink: (bookingId: string, email: string) => request<GenericRequestAccepted>("/api/bookings/manage-link", { method: "POST", body: JSON.stringify({ bookingId, email }) }),
+  // For a client who has neither their link nor the booking id: exactly one of reference or email.
+  requestBookingManageLookup: (input: { reference: string } | { email: string }) => request<GenericRequestAccepted>("/api/bookings/manage-lookup", { method: "POST", body: JSON.stringify(input) }),
   consumeBookingManageLink: (token: string) => request<{ established: true; bookingId: string }>("/api/bookings/manage-link", { method: "PUT", body: JSON.stringify({ token }) }),
   getWorkspaceBranding: () => request<WorkspaceBranding>("/api/settings/branding"),
   updateWorkspaceBranding: (input: WorkspaceBranding) => request<WorkspaceBranding>("/api/settings/branding", { method: "PUT", body: JSON.stringify(input) }),

@@ -102,3 +102,32 @@ a:focus-visible,button:focus-visible,[role=button]:focus-visible,[role=tab]:focu
 /* Live preview of the chosen service colour in the editor topbar; the swatches themselves already render, this is the only place the choice is reflected while editing. */
 .service-color-dot{width:12px;height:12px;border-radius:50%;flex:0 0 12px;box-shadow:0 0 0 1px var(--line)}
 a.back-link{text-decoration:none;width:fit-content}
+
+/* Manage-my-appointment lookup. Built from the same tokens as the auth card, so it inherits both themes. */
+.manage-lookup-modes{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px;border:1px solid var(--line);border-radius:9px;background:var(--canvas)}
+.manage-lookup-modes button{height:36px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-lookup-modes button:hover{color:var(--ink)}
+.manage-lookup-modes button.is-selected{background:var(--surface);border-color:var(--line-strong);color:var(--ink);box-shadow:var(--shadow)}
+.manage-lookup-modes button:focus-visible{outline:3px solid rgba(37,99,235,.18);outline-offset:1px}
+.auth-card form label small{font-size:11px;font-weight:400;color:var(--muted)}
+.auth-card form input[autocapitalize=characters]{text-transform:uppercase;letter-spacing:.08em;font-variant-numeric:tabular-nums}
+.manage-lookup-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.manage-lookup-actions .button{justify-content:center}
+.manage-lookup-foot{text-align:center;font-size:12px}
+.manage-lookup-foot a{color:var(--brand-dark);font-weight:700}
+@media(max-width:540px){.manage-lookup-actions{grid-template-columns:1fr}}
+/* Upcoming-appointment card on the booking directory. .current-booking already carries the surface. */
+.current-booking{display:flex;flex-direction:column;gap:8px;padding:16px;border:1px solid var(--line-strong);border-radius:10px;box-shadow:var(--shadow)}
+.current-booking-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.current-booking strong{font-size:15px}
+.current-booking>span{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.current-booking-reference{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 7px;border-radius:6px;background:var(--brand-soft);color:var(--brand-dark)}
+.current-booking-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+.current-booking-actions .button{justify-content:center}
+/* Back to where the visitor came from: the dashboard for the studio, the booking list for a client.
+   Distinct from .back-link, which the booking flow already owns and gives a bottom margin for in-flow use. */
+.header-back-link{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--muted);border-radius:7px;padding:6px 9px;text-decoration:none;white-space:nowrap}
+.header-back-link:hover{background:var(--canvas);color:var(--ink)}
+.header-back-link:focus-visible{outline:3px solid rgba(37,99,235,.18);outline-offset:1px}
+/* The header becomes a two-part bar wherever a back target exists; unchanged where it does not. */
+.public-header{display:flex;align-items:center;justify-content:space-between;gap:16px}

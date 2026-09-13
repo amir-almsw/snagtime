@@ -106,6 +106,13 @@ export const genericEmailInput = z.object({ email: z.email().transform((value) =
 export const tokenInput = z.object({ token: z.string().min(40).max(500) }).strict();
 export const passwordResetInput = tokenInput.extend({ newPassword: strongPassword }).strict();
 export const bookingRecoveryRequestInput = genericEmailInput.extend({ bookingId: z.string().min(1).max(100) }).strict();
+// "Manage my appointment" takes a reference or an address, never both and never neither. Lengths are
+// bounded here so nothing unbounded reaches the lookup; the reference's shape is checked by
+// normalizeBookingReference, which returns "" for anything that could not be one.
+export const bookingManageLookupInput = z.object({
+  reference: z.string().trim().max(40).optional(),
+  email: z.string().trim().max(320).optional(),
+}).strict().refine((value) => Boolean(value.reference) !== Boolean(value.email), { message: "Enter either a booking reference or the email you booked with." });
 export const cancelBookingInput = z.object({ reason: z.string().trim().min(1).max(500).optional() }).strict();
 export const rescheduleBookingInput = cancelBookingInput.extend({ startAt: z.iso.datetime({ offset: true }) });
 export const bookingCapabilityExchangeInput = z.object({

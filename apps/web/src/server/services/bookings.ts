@@ -14,10 +14,14 @@ import { shouldDrainOutboxInline } from "@/server/services/outbox-dispatch";
 import { getPaymentService, type PaymentService } from "@/server/services/payments";
 import { enqueueBookingEmail, enqueueBookingReminder, supersedeBookingReminders } from "@/server/services/notifications";
 import { boundedPrismaTransactionOptions, withDatabaseTransactionRetry } from "@/server/database-retry";
+import { generateBookingReference } from "@/server/services/booking-reference";
 import { structuredLog } from "@/server/observability";
 
 const activeStatuses = ["CONFIRMED", "PENDING_PAYMENT"];
 function providerErrorCode(error: unknown) { return typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code || "") : ""; }
+// SQLite reports the constraint name ("Booking_reference_key") and PostgreSQL the field list, so this
+// flattens both to one string the caller can substring-match rather than comparing shapes.
+function providerErrorTarget(error: unknown) { const meta = typeof error === "object" && error !== null && "meta" in error ? (error as { meta?: { target?: unknown } }).meta : undefined; return String(meta?.target ?? ""); }
 const MAX_VALIDATED_BOOKING_BUFFER_MINUTES = 240;
 const bookingInclude = { eventType: { select: { name: true } }, host: { select: { name: true } }, answers: true } as const;
 export type InternalCreateBookingResult = { booking: ReturnType<typeof mapBooking>; checkoutUrl: string | null; checkoutState: CreateBookingResult["checkoutState"]; manageCapabilities: BookingManageCapabilities | null };
@@ -204,9 +208,14 @@ export async function createBooking(
   const capability = newCapabilityIdentity(requestedEnd);
   const calendarProviderSnapshot = await calendar.providerKind?.(eventType.ownerId, eventType.workspaceId) ?? "local";
   let created;
+  // A duplicate reference is a coin landing twice, not anything the client can act on. Minting a fresh
+  // code and retrying keeps it invisible; falling through to the P2002 branch below would tell them
+  // their slot was taken, which is both wrong and unactionable.
+  for (let attempt = 0; ; attempt += 1) {
   try {
     created = await withDatabaseTransactionRetry((remainingMs) => db.$transaction(async (tx) => {
       const booking = await tx.booking.create({ data: {
+        reference: generateBookingReference(),
         workspaceId: eventType.workspaceId, eventTypeId: eventType.id, hostId: eventType.ownerId, durationId: duration.id,
         durationMinutes: duration.durationMinutes, priceCents: duration.priceCents, currency: duration.currency,
         bufferBeforeMinutes: eventType.bufferBeforeMinutes, bufferAfterMinutes: eventType.bufferAfterMinutes,
@@ -230,15 +239,18 @@ export async function createBooking(
       await enqueueBookingReminder(tx, booking);
       return tx.booking.findUniqueOrThrow({ where: { id: booking.id }, include: bookingInclude });
     }, boundedPrismaTransactionOptions(remainingMs)));
+    break;
   } catch (error) {
     // SQLite and PostgreSQL use separately generated Prisma clients, so
     // cross-client `instanceof` is not a valid production error discriminator.
+    if (providerErrorCode(error) === "P2002" && providerErrorTarget(error).includes("reference") && attempt < 3) continue;
     if (providerErrorCode(error) === "P2002") {
       const winner = await withDatabaseTransactionRetry(() => priorResult(slug, idempotencyKey, requestFingerprint));
       if (winner) return winner;
       throw conflict("That time was just booked. Choose another slot.");
     }
     throw error;
+  }
   }
   if (shouldDrainOutboxInline()) await processBookingOutbox(created.id);
   return { booking: mapBooking(created), checkoutUrl: null, checkoutState: "NOT_REQUIRED", manageCapabilities: materializeCapabilities(created.id, capability.version, capability.expiresAt, capability.keyId) };

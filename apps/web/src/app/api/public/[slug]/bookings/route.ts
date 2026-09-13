@@ -3,7 +3,7 @@ import { ACTIVE_BOOKING_EXISTS, createBooking } from "@/server/services/bookings
 import { bookingInput } from "@/server/validation";
 import { AppError } from "@/server/errors";
 import { clientAddress, enforceRateLimit } from "@/server/rate-limit";
-import { exchangeBookingCapabilities, manageCookieName, manageCookieOptions, requireBookingManageSession } from "@/server/auth/capabilities";
+import { exchangeBookingCapabilities, lastBookingCookieName, lastBookingCookieOptions, manageCookieName, manageCookieOptions, requireBookingManageSession } from "@/server/auth/capabilities";
 import { requireClientGate } from "@/server/auth/client-gate";
 
 type Context = { params: Promise<{ slug: string }> };
@@ -22,7 +22,7 @@ export async function POST(request: Request, context: Context) {
       bookingId: created.booking.id, status: created.booking.status, checkoutUrl: created.checkoutUrl, checkoutState: created.checkoutState,
       manageSessionEstablished: Boolean(session), manageCapabilities: null,
     }, { status: 201 });
-    if (session) response.cookies.set(manageCookieName(created.booking.id), session.token, { ...manageCookieOptions, expires: session.expiresAt });
+    if (session) { response.cookies.set(manageCookieName(created.booking.id), session.token, { ...manageCookieOptions, expires: session.expiresAt }); response.cookies.set(lastBookingCookieName(), created.booking.id, lastBookingCookieOptions); }
     response.headers.set("Cache-Control", "no-store"); response.headers.set("Referrer-Policy", "no-referrer");
     return response;
   } catch (error) {

@@ -59,7 +59,9 @@ describe("payment and booking authority migration guards", () => {
     try {
       sqlite.exec("PRAGMA foreign_keys=ON");
       const migrationsRoot = "prisma/migrations";
-      for (const directory of readdirSync(migrationsRoot).sort()) {
+      // Directories only: prisma/migrations also holds migration_lock.toml, which is untracked here, so
+      // reading every entry blindly passes in CI and throws ENOTDIR on any working checkout.
+      for (const directory of readdirSync(migrationsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort()) {
         if (directory === "202608240003_payment_investor_safety") continue;
         sqlite.exec(readFileSync(join(migrationsRoot, directory, "migration.sql"), "utf8"));
       }
