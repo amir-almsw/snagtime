@@ -94,6 +94,9 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:?set sender}
       EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:?set system reply address}
       EMAIL_SENDER_DOMAIN: ${EMAIL_SENDER_DOMAIN:?set authorized sender domain}
+      # Optional. Where the studio's own booking notices go; unset means the barber's account address.
+      # Needed on both surfaces: the app writes the recipient at enqueue, the worker re-checks it.
+      ORGANIZER_NOTIFICATION_EMAIL: ${ORGANIZER_NOTIFICATION_EMAIL:-}
   web-admin:
     <<: *web_common
     build: { context: ., target: runtime, args: { BUILD_ID: "${ADMIN_BUILD_ID:?set immutable admin build identity}", NEXT_PUBLIC_APP_URL: "${ADMIN_APP_URL:?set canonical HTTPS admin origin}" } }
@@ -163,6 +166,9 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:?set sender}
       EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:?set system reply address}
       EMAIL_SENDER_DOMAIN: ${EMAIL_SENDER_DOMAIN:?set authorized sender domain}
+      # Optional. Where the studio's own booking notices go; unset means the barber's account address.
+      # Needed on both surfaces: the app writes the recipient at enqueue, the worker re-checks it.
+      ORGANIZER_NOTIFICATION_EMAIL: ${ORGANIZER_NOTIFICATION_EMAIL:-}
     secrets: [worker_database_url,postgres_ca_cert,token_encryption_key,email_token_secret,google_client_secret,smtp_password]
     depends_on: { postgres: { condition: service_healthy } }
     read_only: true

@@ -4,7 +4,8 @@ import { DateTime } from "luxon";
 import nodemailer from "nodemailer";
 import { db } from "@/server/db";
 import { decryptToken, encryptToken } from "@/server/crypto/tokens";
-import { systemEmailIdentity, validatedMailbox } from "@/server/email-config";
+import { organizerNotificationMailbox, systemEmailIdentity, validatedMailbox } from "@/server/email-config";
+import { structuredLog } from "@/server/observability";
 import { renderEmailHtml, renderEmailText, safeAccent, type EmailBody, type EmailBrand } from "@/server/services/email-template";
 
 export type EmailKind = "EMAIL_VERIFY" | "PASSWORD_RESET" | "WORKSPACE_INVITATION" | "BOOKING_RECOVERY" | "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED" | "BOOKING_REMINDER";
@@ -85,7 +86,7 @@ export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmail
   const host = await tx.user.findUnique({ where: { id: booking.hostId }, select: { email: true, timeZone: true } });
   if (host) {
     const organizerAction = kind === "BOOKING_CANCELLED" ? "Appointment canceled" : kind === "BOOKING_RESCHEDULED" ? "Appointment moved" : "New appointment";
-    await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: host.email, subject: `${organizerAction}: ${booking.eventTitleSnapshot}`,
+    await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: organizerNotificationMailbox(host.email), subject: `${organizerAction}: ${booking.eventTitleSnapshot}`,
       payload: { audience: "organizer", hostId: booking.hostId, inviteeName: booking.inviteeName, inviteeEmail: booking.inviteeEmail, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: host.timeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
       idempotencyKey: `email:booking:organizer:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion });
   }
@@ -149,7 +150,7 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
   if (payload.audience === "organizer") {
     if (!row.bookingId) return null;
     const booking = await db.booking.findFirst({ where: { id: row.bookingId, workspaceId: row.workspaceId, hostId: String(payload.hostId) }, select: { host: { select: { email: true } } } });
-    if (!booking || booking.host.email.toLowerCase() !== row.recipientEmail.toLowerCase()) return null;
+    if (!booking || organizerNotificationMailbox(booking.host.email).toLowerCase() !== row.recipientEmail.toLowerCase()) return null;
     const action = row.kind === "BOOKING_CANCELLED" ? "canceled" : row.kind === "BOOKING_RESCHEDULED" ? "moved" : "booked";
     return { subject: row.subjectSnapshot, text: `${String(payload.inviteeName)} (${String(payload.inviteeEmail)}) ${action} ${String(payload.eventTitle)}. ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Open in your dashboard: ${base}/bookings?selected=${encodeURIComponent(row.bookingId)}`, replyTo: String(payload.inviteeEmail) };
   }
@@ -172,9 +173,26 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
   return { subject: row.subjectSnapshot, ...renderClientEmail(brand, row.kind, view, manageUrl, base) };
 }
 
+export function failureCode(error: unknown) {
+  if (!error || typeof error !== "object") return "UNKNOWN";
+  const candidate = error as { code?: unknown; meta?: { code?: unknown }; name?: unknown };
+  const code = candidate.meta?.code ?? candidate.code;
+  if (typeof code === "string" || typeof code === "number") return String(code);
+  return typeof candidate.name === "string" && candidate.name ? candidate.name : "UNKNOWN";
+}
+
+// Branding is decoration; delivery is not. On 2026-09-13 the worker had no SELECT grant on
+// WorkspaceBranding, so this read raised insufficient_privilege and every client email retried to
+// DEAD over a hex colour, while the organizer copy -- whose branch returns before this point -- went
+// out fine. The grant is fixed, but a cosmetic read must never be able to hold a confirmation again.
 async function brandFor(workspaceId: string): Promise<EmailBrand> {
-  const workspace = await db.workspace.findUnique({ where: { id: workspaceId }, select: { name: true, branding: { select: { workspaceName: true, accentColor: true, footerText: true } } } });
-  return { name: workspace?.branding?.workspaceName || workspace?.name || "Your appointment", accentColor: safeAccent(workspace?.branding?.accentColor), footerText: workspace?.branding?.footerText ?? null };
+  try {
+    const workspace = await db.workspace.findUnique({ where: { id: workspaceId }, select: { name: true, branding: { select: { workspaceName: true, accentColor: true, footerText: true } } } });
+    return { name: workspace?.branding?.workspaceName || workspace?.name || "Your appointment", accentColor: safeAccent(workspace?.branding?.accentColor), footerText: workspace?.branding?.footerText ?? null };
+  } catch (error) {
+    structuredLog("warn", { event: "email.branding_unavailable", code: failureCode(error) });
+    return { name: "Your appointment", accentColor: safeAccent(null), footerText: null };
+  }
 }
 
 function clientDetails(payload: Record<string, unknown>, whenLabel: string) {
@@ -280,9 +298,10 @@ export async function processEmailOutbox(workspaceId?: string, now = new Date(),
       const replyTo = rendered.replyTo || (process.env.EMAIL_REPLY_TO ? validatedMailbox(process.env.EMAIL_REPLY_TO) : undefined);
       await provider.send({ workspaceId: row.workspaceId, outboxId: row.id, idempotencyKey: row.idempotencyKey, recipientEmail: row.recipientEmail, ...rendered, replyTo }, signal);
       await db.emailOutbox.updateMany({ where: { id: row.id, leaseToken, status: "PROCESSING" }, data: { status: "COMPLETED", completedAt: now, leaseToken: null, leaseExpiresAt: null, lastErrorCode: null } });
-    } catch {
+    } catch (error) {
       if (signal?.aborted) await db.emailOutbox.updateMany({ where: { id: row.id, leaseToken, status: "PROCESSING" }, data: { status: "RETRY", attemptCount: { decrement: 1 }, nextAttemptAt: now, leaseToken: null, leaseExpiresAt: null, lastErrorCode: "WORKER_STOPPED" } });
-      else { const attempt = row.attemptCount; await db.emailOutbox.updateMany({ where: { id: row.id, leaseToken, status: "PROCESSING" }, data: { status: attempt >= MAX_ATTEMPTS ? "DEAD" : "RETRY", nextAttemptAt: new Date(now.getTime() + Math.min(60 * 60_000, 2 ** Math.min(attempt, 10) * 1_000)), leaseToken: null, leaseExpiresAt: null, lastErrorCode: "DELIVERY_FAILED" } }); }
+      else { const attempt = row.attemptCount;
+        structuredLog("warn", { event: "email.delivery_failed", kind: row.kind, code: failureCode(error), dead: attempt >= MAX_ATTEMPTS }); await db.emailOutbox.updateMany({ where: { id: row.id, leaseToken, status: "PROCESSING" }, data: { status: attempt >= MAX_ATTEMPTS ? "DEAD" : "RETRY", nextAttemptAt: new Date(now.getTime() + Math.min(60 * 60_000, 2 ** Math.min(attempt, 10) * 1_000)), leaseToken: null, leaseExpiresAt: null, lastErrorCode: "DELIVERY_FAILED" } }); }
     }
   }
   return { attempted, pending: await db.emailOutbox.count({ where: { workspaceId, status: { in: ["PENDING","RETRY","PROCESSING"] } } }) };

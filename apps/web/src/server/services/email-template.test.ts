@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
 import { renderEmailHtml, renderEmailText, safeAccent } from "@/server/services/email-template";
-import { enqueueBookingEmail, processEmailOutbox, type EmailDelivery, type EmailProvider } from "@/server/services/notifications";
+import { enqueueBookingEmail, failureCode, processEmailOutbox, type EmailDelivery, type EmailProvider } from "@/server/services/notifications";
 
 const brand = { name: "Dvision Studio", accentColor: "#2563EB", footerText: "Herengracht 1, Amsterdam" };
 const body = { preheader: "Sunday at 14:00", heading: "You’re booked in", intro: "See you then.", details: [{ label: "Service", value: "Master Haircut" }], action: { label: "Reschedule or cancel", href: "https://book.example.invalid/manage/abc#recovery=tok" }, note: "Reply any time." };
@@ -89,5 +89,26 @@ describe("client email templates", () => {
     const message = await deliver(booking.id, "BOOKING_RESCHEDULED", booking.inviteeEmail);
     expect(message.text).toContain("moved");
     expect(message.html).toContain("moved");
+  });
+
+  // The 2026-09-13 outage in one test: the worker could not read WorkspaceBranding, and the whole
+  // confirmation died with it. Branding is decoration and must degrade, not block.
+  it("still delivers when the branding read is refused", async () => {
+    const booking = await seed();
+    const denied = Object.assign(new Error("permission denied"), { meta: { code: "42501" } });
+    const spy = vi.spyOn(db.workspace, "findUnique").mockRejectedValue(denied);
+    try {
+      const message = await deliver(booking.id, "BOOKING_CONFIRMED", booking.inviteeEmail);
+      expect(message.text).toContain("Master Haircut");
+      expect(message.text).toContain(`/manage/${booking.id}/reschedule#recovery=`);
+      expect(message.html).toContain("Herengracht 1, Amsterdam");
+    } finally { spy.mockRestore(); }
+  });
+
+  it("reduces a failure to a class identifier, never a message that could quote booking data", () => {
+    expect(failureCode(Object.assign(new Error("permission denied for table X"), { meta: { code: "42501" } }))).toBe("42501");
+    expect(failureCode(Object.assign(new Error("raw query failed"), { code: "P2010" }))).toBe("P2010");
+    expect(failureCode(new TypeError("sam.visser@example.invalid is not a function"))).toBe("TypeError");
+    for (const value of [null, undefined, "a string", 42]) expect(failureCode(value)).toBe("UNKNOWN");
   });
 });

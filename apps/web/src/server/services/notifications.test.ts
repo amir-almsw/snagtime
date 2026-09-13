@@ -152,6 +152,23 @@ describe("transactional email and recovery authority", () => {
     delete process.env.DEMO_MODE; await expect(listLocalInbox(owner.workspace.id)).rejects.toThrow("LOCAL_INBOX_DISABLED"); delete process.env.EMAIL_PROVIDER;
   });
 
+  it("sends studio notices to the configured shop mailbox, leaving the sign-in address alone", async () => {
+    const owner = await fixture("organizer-recipient"); const event = await db.eventType.create({ data: { workspaceId: owner.workspace.id, ownerId: owner.user.id, name: "Redirect event", slug: `redirect-${randomUUID()}`, locationType: "CUSTOM" } });
+    process.env.ORGANIZER_NOTIFICATION_EMAIL = "support@dvision.test";
+    try {
+      const booking = await db.booking.create({ data: { workspaceId: owner.workspace.id, eventTypeId: event.id, hostId: owner.user.id, durationMinutes: 30, inviteeName: "Redirect Probe", inviteeEmail: "redirect-probe@example.invalid", inviteeTimeZone: "UTC", startAt: new Date("2099-08-01T10:00:00Z"), endAt: new Date("2099-08-01T10:30:00Z"), eventTitleSnapshot: "Redirect event", capabilityVersion: randomUUID(), manageExpiresAt: new Date("2099-09-01T00:00:00Z") } });
+      try {
+        await db.$transaction((tx) => enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED"));
+        const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider);
+        const studio = provider.messages.find((message) => message.subject.startsWith("New appointment:"))!;
+        expect(studio.recipientEmail).toBe("support@dvision.test");
+        expect(studio.recipientEmail).not.toBe(owner.user.email);
+        // Replying still reaches the client, not the shop mailbox.
+        expect(studio.replyTo).toBe("redirect-probe@example.invalid");
+      } finally { await db.booking.delete({ where: { id: booking.id } }); }
+    } finally { delete process.env.ORGANIZER_NOTIFICATION_EMAIL; }
+  });
+
   it("delivers through bounded STARTTLS SMTP with a deterministic message identity", async () => {
     let received = "";
     const server = new SMTPServer({ secure: false, authOptional: true, onAuth(auth, _session, callback) { callback(null, { user: auth.username }); }, onData(stream, _session, callback) { stream.on("data", (chunk) => { received += chunk.toString("utf8"); }); stream.on("end", () => callback()); } });
