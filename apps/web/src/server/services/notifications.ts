@@ -5,9 +5,10 @@ import nodemailer from "nodemailer";
 import { db } from "@/server/db";
 import { decryptToken, encryptToken } from "@/server/crypto/tokens";
 import { systemEmailIdentity, validatedMailbox } from "@/server/email-config";
+import { renderEmailHtml, renderEmailText, safeAccent, type EmailBody, type EmailBrand } from "@/server/services/email-template";
 
 export type EmailKind = "EMAIL_VERIFY" | "PASSWORD_RESET" | "WORKSPACE_INVITATION" | "BOOKING_RECOVERY" | "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED" | "BOOKING_REMINDER";
-export type EmailDelivery = { workspaceId: string; outboxId: string; idempotencyKey: string; recipientEmail: string; subject: string; text: string; replyTo?: string };
+export type EmailDelivery = { workspaceId: string; outboxId: string; idempotencyKey: string; recipientEmail: string; subject: string; text: string; html?: string; replyTo?: string };
 export interface EmailProvider { send(message: EmailDelivery, signal?: AbortSignal): Promise<void> }
 export const EMAIL_LEASE_MS = 60_000;
 const MAX_ATTEMPTS = 8;
@@ -49,11 +50,21 @@ export async function enqueueEmail(tx: Transaction, input: EnqueueEmail) {
   } });
 }
 
-type BookingEmailSnapshot = { id: string; reference?: string | null; workspaceId: string; hostId: string; inviteeName: string; inviteeEmail: string; inviteeTimeZone: string; eventTitleSnapshot: string; startAt: Date; endAt: Date; priceCents: number; currency: string; stripePaymentStatus: string | null; refundStatus?: string; mutationVersion: number; calendarProviderSnapshot?: string | null };
-// When Google Calendar carries the booking, its invitation IS the client's confirmation. The app’s own
-// copy is deferred rather than dropped: a successful provider notice supersedes it (outbox.ts), and a
-// provider failure lets it deliver as the fallback so a Google outage never leaves clients unnotified.
-export const GOOGLE_INVITE_FALLBACK_MS = 5 * 60_000;
+type BookingEmailSnapshot = { id: string; reference?: string | null; workspaceId: string; hostId: string; inviteeName: string; durationMinutes?: number; locationTypeSnapshot?: string; locationValueSnapshot?: string | null; inviteeEmail: string; inviteeTimeZone: string; eventTitleSnapshot: string; startAt: Date; endAt: Date; priceCents: number; currency: string; stripePaymentStatus: string | null; refundStatus?: string; mutationVersion: number; calendarProviderSnapshot?: string | null };
+// The studio's own confirmation always goes out, whatever the calendar provider does. Google's invite
+// is a calendar artefact: it carries no booking reference, no manage link and none of the shop's
+// branding, so letting it stand in for the confirmation loses the client everything they need later.
+// Two messages per booking is the accepted cost (outbox.ts no longer supersedes this one).
+function locationLine(booking: BookingEmailSnapshot) {
+  const value = booking.locationValueSnapshot?.trim();
+  if (value) return value;
+  return booking.locationTypeSnapshot === "GOOGLE_MEET" ? "Google Meet" : booking.locationTypeSnapshot === "PHONE" ? "Phone call" : "In person";
+}
+function clientPayload(booking: BookingEmailSnapshot, recoveryTokenId: string) {
+  return { recoveryTokenId, reference: booking.reference ?? null, eventTitle: booking.eventTitleSnapshot, inviteeName: booking.inviteeName,
+    startAt: booking.startAt.toISOString(), endAt: booking.endAt.toISOString(), timeZone: booking.inviteeTimeZone, durationMinutes: booking.durationMinutes ?? null,
+    location: locationLine(booking), priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) };
+}
 function paymentTruth(booking: BookingEmailSnapshot) {
   if (booking.priceCents === 0) return "No payment required";
   if (booking.refundStatus === "REFUNDED") return "Refunded";
@@ -69,9 +80,8 @@ export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmail
   await tx.bookingRecoveryToken.create({ data: { id, workspaceId: booking.workspaceId, bookingId: booking.id, email: booking.inviteeEmail.toLowerCase(), tokenHash: authority.tokenHash, expiresAt } });
   const action = kind === "BOOKING_CANCELLED" ? "Your appointment is canceled" : kind === "BOOKING_RESCHEDULED" ? "Your appointment has moved" : "You’re booked";
   await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: booking.inviteeEmail, subject: `${action}: ${booking.eventTitleSnapshot}`,
-    payload: { recoveryTokenId: id, reference: booking.reference ?? null, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
-    idempotencyKey: `email:booking:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion,
-    nextAttemptAt: booking.calendarProviderSnapshot === "google" ? new Date(now.getTime() + GOOGLE_INVITE_FALLBACK_MS) : undefined });
+    payload: clientPayload(booking, id),
+    idempotencyKey: `email:booking:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion });
   const host = await tx.user.findUnique({ where: { id: booking.hostId }, select: { email: true, timeZone: true } });
   if (host) {
     const organizerAction = kind === "BOOKING_CANCELLED" ? "Appointment canceled" : kind === "BOOKING_RESCHEDULED" ? "Appointment moved" : "New appointment";
@@ -95,7 +105,7 @@ export async function enqueueBookingReminder(tx: Transaction, booking: BookingEm
   const expiresAt = new Date(Math.max(now.getTime() + 7 * 24 * 60 * 60_000, booking.endAt.getTime() + 30 * 24 * 60 * 60_000));
   await tx.bookingRecoveryToken.create({ data: { id, workspaceId: booking.workspaceId, bookingId: booking.id, email: booking.inviteeEmail.toLowerCase(), tokenHash: authority.tokenHash, expiresAt } });
   await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind: "BOOKING_REMINDER", recipientEmail: booking.inviteeEmail, subject: `See you soon: ${booking.eventTitleSnapshot}`,
-    payload: { recoveryTokenId: id, reference: booking.reference ?? null, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: booking.inviteeTimeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
+    payload: clientPayload(booking, id),
     idempotencyKey: `email:booking:REMINDER:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion, nextAttemptAt: sendAt });
 }
 // Called inside the cancel and reschedule transactions so a client who cancels is never reminded to attend.
@@ -108,13 +118,16 @@ export function appBaseUrl() {
   const url = new URL(value); if (process.env.NODE_ENV === "production" && url.protocol !== "https:") throw new Error("Production email links require canonical HTTPS NEXT_PUBLIC_APP_URL.");
   return url.origin;
 }
-function money(cents: number, currency: string) { return cents === 0 ? "Free" : new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(cents / 100); }
+function money(cents: number, currency: string) { return cents === 0 ? "Free" : new Intl.NumberFormat("en-GB", { style: "currency", currency: currency.toUpperCase() }).format(cents / 100); }
 // Prices are display-only, so a free service says nothing at all rather than "Free. Payment: none".
 function priceLine(payload: Record<string, unknown>) {
   const cents = Number(payload.priceCents);
   return cents > 0 ? ` ${money(cents, String(payload.currency))} — ${String(payload.paymentTruth).toLowerCase()}.` : "";
 }
-function bookingTime(startAt: string, timeZone: string) { return DateTime.fromISO(startAt).setZone(timeZone).toLocaleString(DateTime.DATETIME_FULL); }
+// en-GB, not the default en-US: an Amsterdam shop writes "Thursday 2 April 2099 at 14:00", and a
+// client reading "2:00 PM" has to translate it. DATETIME_HUGE carries the weekday, which is the part
+// of an appointment people actually check.
+function bookingTime(startAt: string, timeZone: string) { return DateTime.fromISO(startAt).setZone(timeZone).setLocale("en-GB").toFormat("cccc d LLLL yyyy 'at' HH:mm (ZZZZ)"); }
 
 async function render(row: { kind: string; workspaceId: string; bookingId: string | null; recipientEmail: string; subjectSnapshot: string; payloadJson: string }, at = new Date()) {
   const payload = JSON.parse(row.payloadJson) as Record<string, unknown>; const base = appBaseUrl();
@@ -144,17 +157,73 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
   if (!recovery || recovery.workspaceId !== row.workspaceId || recovery.bookingId !== row.bookingId || recovery.email !== row.recipientEmail || recovery.consumedAt || recovery.revokedAt || recovery.expiresAt <= at) return null;
   const binding = bookingTokenBinding(recovery.workspaceId, recovery.bookingId, recovery.email); const token = materializeActionToken(recovery.id, "BOOKING_RECOVERY", binding);
   if (!tokenHashMatches(actionTokenHash(token, "BOOKING_RECOVERY", binding), recovery.tokenHash)) return null;
-  if (row.kind === "BOOKING_RECOVERY") return { subject: row.subjectSnapshot, text: `Here is your link to reschedule or cancel your appointment: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}` };
-  if (row.kind === "BOOKING_REMINDER") {
-    const booking = await db.booking.findFirst({ where: { id: recovery.bookingId, workspaceId: row.workspaceId }, select: { status: true } });
-    if (booking?.status !== "CONFIRMED") return null;
-    return { subject: row.subjectSnapshot, text: `A friendly reminder: your ${String(payload.eventTitle)} is coming up on ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Need to reschedule or cancel? ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}${payload.reference ? ` Your booking reference is ${String(payload.reference)}.` : ""}` };
-  }
-  // Quoted so a client can find the appointment again from /manage without the link above -- the only
-  // route back in once a one-use recovery link has been spent.
-  const referenceLine = payload.reference ? ` Your booking reference is ${String(payload.reference)}.` : "";
-  const opening = row.kind === "BOOKING_CANCELLED" ? `Your ${String(payload.eventTitle)} is canceled. It was booked for` : row.kind === "BOOKING_RESCHEDULED" ? `Your ${String(payload.eventTitle)} has moved. We will see you` : `You are booked in for ${String(payload.eventTitle)}. We will see you`;
-  return { subject: row.subjectSnapshot, text: `${opening} ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Reschedule or cancel any time: ${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}${referenceLine}` };
+  const manageUrl = `${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}`;
+  // A recovery mail carries only its token id, so the appointment it refers to is read here rather than
+  // snapshotted at enqueue time. A booking email carries its own snapshot and needs no second read.
+  const detail = await db.booking.findFirst({ where: { id: recovery.bookingId, workspaceId: row.workspaceId }, select: { status: true, reference: true, eventTitleSnapshot: true, inviteeName: true, inviteeTimeZone: true, startAt: true, endAt: true, durationMinutes: true, locationTypeSnapshot: true, locationValueSnapshot: true, priceCents: true, currency: true, stripePaymentStatus: true, refundStatus: true } });
+  if (!detail) return null;
+  // A reminder for an appointment that is no longer on is worse than no reminder at all.
+  if (row.kind === "BOOKING_REMINDER" && detail.status !== "CONFIRMED") return null;
+  const { status: ignoredStatus, ...current } = detail; void ignoredStatus;
+  const view = row.kind === "BOOKING_RECOVERY"
+    ? clientPayload({ ...current, id: recovery.bookingId, workspaceId: row.workspaceId, hostId: "", inviteeEmail: recovery.email, mutationVersion: 0 }, recovery.id)
+    : payload;
+  const brand = await brandFor(row.workspaceId);
+  return { subject: row.subjectSnapshot, ...renderClientEmail(brand, row.kind, view, manageUrl, base) };
+}
+
+async function brandFor(workspaceId: string): Promise<EmailBrand> {
+  const workspace = await db.workspace.findUnique({ where: { id: workspaceId }, select: { name: true, branding: { select: { workspaceName: true, accentColor: true, footerText: true } } } });
+  return { name: workspace?.branding?.workspaceName || workspace?.name || "Your appointment", accentColor: safeAccent(workspace?.branding?.accentColor), footerText: workspace?.branding?.footerText ?? null };
+}
+
+function clientDetails(payload: Record<string, unknown>, whenLabel: string) {
+  const details: EmailBody["details"] = [{ label: "Service", value: String(payload.eventTitle) }, { label: whenLabel, value: bookingTime(String(payload.startAt), String(payload.timeZone)) }];
+  const minutes = Number(payload.durationMinutes);
+  if (Number.isFinite(minutes) && minutes > 0) details.push({ label: "Length", value: `${minutes} minutes` });
+  if (payload.location) details.push({ label: "Where", value: String(payload.location) });
+  const cents = Number(payload.priceCents);
+  if (cents > 0) details.push({ label: "Price", value: `${money(cents, String(payload.currency))} — ${String(payload.paymentTruth).toLowerCase()}` });
+  // Last, because it is the one line a client copies out when the link has been used up.
+  if (payload.reference) details.push({ label: "Booking reference", value: String(payload.reference) });
+  return details;
+}
+
+const REPLY_NOTE = "Need to tell us something? Just reply to this email.";
+function clientBody(kind: string, payload: Record<string, unknown>, manageUrl: string, base: string): EmailBody {
+  const title = String(payload.eventTitle); const when = bookingTime(String(payload.startAt), String(payload.timeZone));
+  const name = String(payload.inviteeName || "").trim().split(/\s+/)[0];
+  const greeting = name ? `${name}, ` : "";
+  if (kind === "BOOKING_CANCELLED") return {
+    preheader: `Canceled — was ${when}`, heading: "Your appointment is canceled",
+    intro: `${greeting}your ${title} has been canceled. Nothing further is needed from you.`,
+    details: clientDetails(payload, "Was booked for"), action: { label: "Book another appointment", href: `${base}/book` }, note: REPLY_NOTE,
+  };
+  if (kind === "BOOKING_RESCHEDULED") return {
+    preheader: `Moved to ${when}`, heading: "Your appointment has moved",
+    intro: `${greeting}your ${title} has moved. The new time is below — nothing else has changed.`,
+    details: clientDetails(payload, "New time"), action: { label: "Reschedule or cancel", href: manageUrl }, note: REPLY_NOTE,
+  };
+  if (kind === "BOOKING_REMINDER") return {
+    preheader: `${when} — ${String(payload.location || "see you soon")}`, heading: "See you soon",
+    intro: `${greeting}a reminder that your ${title} is coming up.`,
+    details: clientDetails(payload, "When"), action: { label: "Reschedule or cancel", href: manageUrl }, note: REPLY_NOTE,
+  };
+  if (kind === "BOOKING_RECOVERY") return {
+    preheader: "Your link to reschedule or cancel", heading: "Here is your appointment",
+    intro: `${greeting}use the button below to reschedule or cancel your ${title}.`,
+    details: clientDetails(payload, "When"), action: { label: "Manage my appointment", href: manageUrl }, note: REPLY_NOTE,
+  };
+  return {
+    preheader: `${when} — ${String(payload.location || "confirmed")}`, heading: "You’re booked in",
+    intro: `${greeting}your ${title} is confirmed. We will see you then.`,
+    details: clientDetails(payload, "When"), action: { label: "Reschedule or cancel", href: manageUrl },
+    note: `Plans change — the button above works right up until your appointment. ${REPLY_NOTE}`,
+  };
+}
+function renderClientEmail(brand: EmailBrand, kind: string, payload: Record<string, unknown>, manageUrl: string, base: string) {
+  const body = clientBody(kind, payload, manageUrl, base);
+  return { text: renderEmailText(brand, body), html: renderEmailHtml(brand, body) };
 }
 
 export class LocalInboxEmailProvider implements EmailProvider {
@@ -168,6 +237,7 @@ export class SmtpEmailProvider implements EmailProvider {
   private readonly transport: ReturnType<typeof nodemailer.createTransport>;
   private readonly from: string;
   private readonly systemReplyTo: string;
+  private readonly senderDomain: string;
   constructor() {
     const required = ["SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASSWORD","EMAIL_FROM","EMAIL_REPLY_TO","EMAIL_SENDER_DOMAIN","SMTP_TLS_MODE"];
     if (required.some((name) => !process.env[name])) throw new Error("SMTP_CONFIGURATION_INCOMPLETE");
@@ -175,13 +245,13 @@ export class SmtpEmailProvider implements EmailProvider {
     if (!Number.isSafeInteger(port) || port < 1 || port > 65_535 || !Number.isSafeInteger(timeout) || timeout < 1_000 || timeout > 10_000) throw new Error("SMTP_CONFIGURATION_INVALID");
     const mode = process.env.SMTP_TLS_MODE; if (mode !== "implicit" && mode !== "starttls") throw new Error("SMTP_CONFIGURATION_INVALID");
     const allowSelfSigned = process.env.NODE_ENV === "test" && process.env.SMTP_ALLOW_SELF_SIGNED === "true";
-    const identity = systemEmailIdentity(); this.systemReplyTo = identity.replyTo; this.from = identity.from;
+    const identity = systemEmailIdentity(); this.systemReplyTo = identity.replyTo; this.from = identity.from; this.senderDomain = identity.senderDomain;
     this.transport = nodemailer.createTransport({ host: process.env.SMTP_HOST!, port, secure: mode === "implicit", requireTLS: mode === "starttls", auth: { user: process.env.SMTP_USER!, pass: process.env.SMTP_PASSWORD! }, connectionTimeout: timeout, greetingTimeout: timeout, socketTimeout: timeout, tls: { rejectUnauthorized: !allowSelfSigned } });
   }
   async send(message: EmailDelivery, signal?: AbortSignal) {
     if (signal?.aborted) throw new Error("SMTP_DELIVERY_ABORTED");
     const identity = createHash("sha256").update(`tempocove-email-v1\0${message.idempotencyKey}`).digest("hex");
-    await this.transport.sendMail({ from: this.from, to: validatedMailbox(message.recipientEmail), replyTo: validatedMailbox(message.replyTo || this.systemReplyTo), subject: message.subject, text: message.text, messageId: `<${identity}@snagtime.invalid>`, headers: { "X-SnagTime-Dedupe": identity } });
+    await this.transport.sendMail({ from: this.from, to: validatedMailbox(message.recipientEmail), replyTo: validatedMailbox(message.replyTo || this.systemReplyTo), subject: message.subject, text: message.text, ...(message.html ? { html: message.html } : {}), messageId: `<${identity}@${this.senderDomain}>`, headers: { "X-SnagTime-Dedupe": identity } });
     // Once SMTP acknowledges the deterministic message id, commit SENT even if shutdown starts.
     // Retrying after an accepted response would create a duplicate external delivery.
   }

@@ -159,9 +159,12 @@ describe("transactional email and recovery authority", () => {
     try {
       const address = server.server.address(); if (!address || typeof address === "string") throw new Error("SMTP test listener missing");
       process.env.SMTP_HOST = "127.0.0.1"; process.env.SMTP_PORT = String(address.port); process.env.SMTP_USER = "test"; process.env.SMTP_PASSWORD = "test"; process.env.EMAIL_FROM = "SnagTime <notifications@example.invalid>"; process.env.EMAIL_REPLY_TO = "support@example.invalid"; process.env.EMAIL_SENDER_DOMAIN = "example.invalid"; process.env.SMTP_TLS_MODE = "starttls"; process.env.SMTP_ALLOW_SELF_SIGNED = "true";
-      const provider = new SmtpEmailProvider(); const delivery = { workspaceId: "smtp-workspace", outboxId: "smtp-outbox", idempotencyKey: "smtp-idempotency", recipientEmail: "recipient@example.invalid", replyTo: "invitee@example.net", subject: "SMTP proof", text: "bounded TLS delivery" };
+      const provider = new SmtpEmailProvider(); const delivery = { workspaceId: "smtp-workspace", outboxId: "smtp-outbox", idempotencyKey: "smtp-idempotency", recipientEmail: "recipient@example.invalid", replyTo: "invitee@example.net", subject: "SMTP proof", text: "bounded TLS delivery", html: "<p>bounded TLS delivery</p>" };
       await provider.send(delivery);
-      expect(received).toContain("bounded TLS delivery"); expect(received).toMatch(/From: SnagTime <notifications@example\.invalid>/i); expect(received).toMatch(/Reply-To: invitee@example\.net/i); expect(received).toMatch(/X-SnagTime-Dedupe:/i); expect(received).toMatch(/Message-ID:\s*\r?\n?\s*<[0-9a-f]{64}@snagtime\.invalid>/i);
+      expect(received).toContain("bounded TLS delivery"); expect(received).toMatch(/From: SnagTime <notifications@example\.invalid>/i); expect(received).toMatch(/Reply-To: invitee@example\.net/i); expect(received).toMatch(/X-SnagTime-Dedupe:/i);
+      // The Message-ID domain has to resolve. A reserved TLD costs reputation with some filters.
+      expect(received).toMatch(/Message-ID:\s*\r?\n?\s*<[0-9a-f]{64}@example\.invalid>/i);
+      expect(received).toMatch(/Content-Type: multipart\/alternative/i); expect(received).toContain("<p>bounded TLS delivery</p>");
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
 
