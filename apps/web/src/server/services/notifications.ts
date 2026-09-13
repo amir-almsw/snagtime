@@ -73,6 +73,26 @@ function paymentTruth(booking: BookingEmailSnapshot) {
   if (booking.refundStatus === "REFUND_FAILED") return "Paid; refund needs attention";
   return booking.stripePaymentStatus === "paid" ? "Paid" : booking.stripePaymentStatus === "paid_after_cancel" ? "Paid; refund pending" : "Payable at the shop";
 }
+// Where the studio's own notices are delivered, which is deliberately not the address the organizer
+// signs in with. Resolved through the definer under production PostgreSQL because this runs under
+// three different contexts -- public booking creation, an organizer session, and a client's
+// capability link -- and no single Workspace SELECT policy spans all three; SQLite has no row level
+// security and reads the column. Any failure falls back to the account address: a shop mailbox is a
+// convenience, and it must never be able to stop a booking being made or cancelled.
+type MailboxReader = Pick<Transaction, "$queryRawUnsafe" | "workspace">;
+async function studioNotificationMailbox(client: MailboxReader, workspaceId: string, accountEmail: string) {
+  try {
+    const configured = process.env.DATABASE_PROVIDER === "postgresql" && process.env.NODE_ENV === "production"
+      ? (await client.$queryRawUnsafe<Array<{ email: string | null }>>("SELECT tempocove_workspace_notification_email($1::text) AS email", workspaceId))[0]?.email
+      : (await client.workspace.findUnique({ where: { id: workspaceId }, select: { notificationEmail: true } }))?.notificationEmail;
+    const trimmed = (configured || "").trim();
+    return trimmed ? validatedMailbox(trimmed) : accountEmail;
+  } catch (error) {
+    structuredLog("warn", { event: "email.studio_mailbox_unavailable", code: failureCode(error) });
+    return accountEmail;
+  }
+}
+
 export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmailSnapshot, kind: "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED", now = new Date()) {
   await tx.bookingRecoveryToken.updateMany({ where: { bookingId: booking.id, consumedAt: null, revokedAt: null }, data: { revokedAt: now } });
   const expiresAt = new Date(Math.max(now.getTime() + 7 * 24 * 60 * 60_000, booking.endAt.getTime() + 30 * 24 * 60 * 60_000));
@@ -86,7 +106,8 @@ export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmail
   const host = await tx.user.findUnique({ where: { id: booking.hostId }, select: { email: true, timeZone: true } });
   if (host) {
     const organizerAction = kind === "BOOKING_CANCELLED" ? "Appointment canceled" : kind === "BOOKING_RESCHEDULED" ? "Appointment moved" : "New appointment";
-    await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: host.email, subject: `${organizerAction}: ${booking.eventTitleSnapshot}`,
+    const studioMailbox = await studioNotificationMailbox(tx, booking.workspaceId, host.email);
+    await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: studioMailbox, subject: `${organizerAction}: ${booking.eventTitleSnapshot}`,
       payload: { audience: "organizer", hostId: booking.hostId, inviteeName: booking.inviteeName, inviteeEmail: booking.inviteeEmail, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: host.timeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
       idempotencyKey: `email:booking:organizer:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion });
   }
@@ -150,7 +171,9 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
   if (payload.audience === "organizer") {
     if (!row.bookingId) return null;
     const booking = await db.booking.findFirst({ where: { id: row.bookingId, workspaceId: row.workspaceId, hostId: String(payload.hostId) }, select: { host: { select: { email: true } } } });
-    if (!booking || booking.host.email.toLowerCase() !== row.recipientEmail.toLowerCase()) return null;
+    if (!booking) return null;
+    const expected = await studioNotificationMailbox(db, row.workspaceId, booking.host.email);
+    if (expected.toLowerCase() !== row.recipientEmail.toLowerCase()) return null;
     const action = row.kind === "BOOKING_CANCELLED" ? "canceled" : row.kind === "BOOKING_RESCHEDULED" ? "moved" : "booked";
     return { subject: row.subjectSnapshot, text: `${String(payload.inviteeName)} (${String(payload.inviteeEmail)}) ${action} ${String(payload.eventTitle)}. ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Open in your dashboard: ${base}/bookings?selected=${encodeURIComponent(row.bookingId)}`, replyTo: String(payload.inviteeEmail) };
   }

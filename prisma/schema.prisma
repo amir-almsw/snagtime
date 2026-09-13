@@ -33,6 +33,13 @@ model User {
 model Workspace {
   id                    String                 @id @default(cuid())
   name                  String
+  // Where the studio's own booking notices are delivered, which is deliberately not the address the
+  // organizer signs in with: the login stays personal, the notices go to a shared shop mailbox.
+  // It lives here rather than in configuration because the EmailOutbox insert policies pin the
+  // recipient to an address the database can see -- an environment variable is invisible to RLS, and
+  // setting one produced a 500 on every booking and cancellation before this column existed.
+  // Null means the two are the same address, which is the single-operator default.
+  notificationEmail     String?
   timeZone              String                 @default("America/Chicago")
   onboardingCompletedAt DateTime?
   createdAt             DateTime               @default(now())

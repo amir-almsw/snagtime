@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SMTPServer } from "smtp-server";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
 import { createSessionForUser, type WorkspaceAccess } from "@/server/auth/session";
 import { verifyPassword } from "@/server/auth/password";
@@ -150,6 +150,34 @@ describe("transactional email and recovery authority", () => {
     const stored = await db.localInboxMessage.findFirstOrThrow({ where: { workspaceId: owner.workspace.id } }); expect(stored.encryptedText).not.toContain("sanitized local delivery");
     expect((await listLocalInbox(owner.workspace.id))[0]!.text).toBe("sanitized local delivery");
     delete process.env.DEMO_MODE; await expect(listLocalInbox(owner.workspace.id)).rejects.toThrow("LOCAL_INBOX_DISABLED"); delete process.env.EMAIL_PROVIDER;
+  });
+
+  it("sends studio notices to the workspace mailbox when one is set, leaving the sign-in address alone", async () => {
+    const owner = await fixture("studio-mailbox"); const event = await db.eventType.create({ data: { workspaceId: owner.workspace.id, ownerId: owner.user.id, name: "Studio event", slug: `studio-${randomUUID()}`, locationType: "CUSTOM" } });
+    await db.workspace.update({ where: { id: owner.workspace.id }, data: { notificationEmail: "support@dvision.test" } });
+    const booking = await db.booking.create({ data: { workspaceId: owner.workspace.id, eventTypeId: event.id, hostId: owner.user.id, durationMinutes: 30, inviteeName: "Mailbox Probe", inviteeEmail: "mailbox-probe@example.invalid", inviteeTimeZone: "UTC", startAt: new Date("2099-08-01T10:00:00Z"), endAt: new Date("2099-08-01T10:30:00Z"), eventTitleSnapshot: "Studio event", capabilityVersion: randomUUID(), manageExpiresAt: new Date("2099-09-01T00:00:00Z") } });
+    try {
+      await db.$transaction((tx) => enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED"));
+      const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider);
+      const studio = provider.messages.find((message) => message.subject.startsWith("New appointment:"))!;
+      expect(studio.recipientEmail).toBe("support@dvision.test");
+      expect(studio.recipientEmail).not.toBe(owner.user.email);
+      // Replying still reaches the client rather than the shop mailbox.
+      expect(studio.replyTo).toBe("mailbox-probe@example.invalid");
+      // And the client's own copy is untouched by any of this.
+      expect(provider.messages.some((message) => message.recipientEmail === "mailbox-probe@example.invalid")).toBe(true);
+    } finally { await db.booking.delete({ where: { id: booking.id } }); }
+  });
+
+  it("falls back to the sign-in address when the workspace mailbox cannot be read, rather than dropping the notice", async () => {
+    const owner = await fixture("studio-mailbox-denied"); const event = await db.eventType.create({ data: { workspaceId: owner.workspace.id, ownerId: owner.user.id, name: "Denied event", slug: `denied-${randomUUID()}`, locationType: "CUSTOM" } });
+    const booking = await db.booking.create({ data: { workspaceId: owner.workspace.id, eventTypeId: event.id, hostId: owner.user.id, durationMinutes: 30, inviteeName: "Denied Probe", inviteeEmail: "denied-probe@example.invalid", inviteeTimeZone: "UTC", startAt: new Date("2099-08-02T10:00:00Z"), endAt: new Date("2099-08-02T10:30:00Z"), eventTitleSnapshot: "Denied event", capabilityVersion: randomUUID(), manageExpiresAt: new Date("2099-09-01T00:00:00Z") } });
+    const spy = vi.spyOn(db.workspace, "findUnique").mockRejectedValue(Object.assign(new Error("permission denied"), { meta: { code: "42501" } }));
+    try {
+      await db.$transaction((tx) => enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED"));
+      const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider);
+      expect(provider.messages.find((message) => message.subject.startsWith("New appointment:"))!.recipientEmail).toBe(owner.user.email.toLowerCase());
+    } finally { spy.mockRestore(); await db.booking.delete({ where: { id: booking.id } }); }
   });
 
   it("delivers through bounded STARTTLS SMTP with a deterministic message identity", async () => {
