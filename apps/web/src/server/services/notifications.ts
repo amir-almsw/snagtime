@@ -4,7 +4,7 @@ import { DateTime } from "luxon";
 import nodemailer from "nodemailer";
 import { db } from "@/server/db";
 import { decryptToken, encryptToken } from "@/server/crypto/tokens";
-import { organizerNotificationMailbox, systemEmailIdentity, validatedMailbox } from "@/server/email-config";
+import { systemEmailIdentity, validatedMailbox } from "@/server/email-config";
 import { structuredLog } from "@/server/observability";
 import { renderEmailHtml, renderEmailText, safeAccent, type EmailBody, type EmailBrand } from "@/server/services/email-template";
 
@@ -86,7 +86,7 @@ export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmail
   const host = await tx.user.findUnique({ where: { id: booking.hostId }, select: { email: true, timeZone: true } });
   if (host) {
     const organizerAction = kind === "BOOKING_CANCELLED" ? "Appointment canceled" : kind === "BOOKING_RESCHEDULED" ? "Appointment moved" : "New appointment";
-    await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: organizerNotificationMailbox(host.email), subject: `${organizerAction}: ${booking.eventTitleSnapshot}`,
+    await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: host.email, subject: `${organizerAction}: ${booking.eventTitleSnapshot}`,
       payload: { audience: "organizer", hostId: booking.hostId, inviteeName: booking.inviteeName, inviteeEmail: booking.inviteeEmail, eventTitle: booking.eventTitleSnapshot, startAt: booking.startAt.toISOString(), timeZone: host.timeZone, priceCents: booking.priceCents, currency: booking.currency, paymentTruth: paymentTruth(booking) },
       idempotencyKey: `email:booking:organizer:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion });
   }
@@ -150,7 +150,7 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
   if (payload.audience === "organizer") {
     if (!row.bookingId) return null;
     const booking = await db.booking.findFirst({ where: { id: row.bookingId, workspaceId: row.workspaceId, hostId: String(payload.hostId) }, select: { host: { select: { email: true } } } });
-    if (!booking || organizerNotificationMailbox(booking.host.email).toLowerCase() !== row.recipientEmail.toLowerCase()) return null;
+    if (!booking || booking.host.email.toLowerCase() !== row.recipientEmail.toLowerCase()) return null;
     const action = row.kind === "BOOKING_CANCELLED" ? "canceled" : row.kind === "BOOKING_RESCHEDULED" ? "moved" : "booked";
     return { subject: row.subjectSnapshot, text: `${String(payload.inviteeName)} (${String(payload.inviteeEmail)}) ${action} ${String(payload.eventTitle)}. ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Open in your dashboard: ${base}/bookings?selected=${encodeURIComponent(row.bookingId)}`, replyTo: String(payload.inviteeEmail) };
   }

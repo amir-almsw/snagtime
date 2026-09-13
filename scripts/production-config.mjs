@@ -27,8 +27,6 @@ if (mode !== "migration") {
   if (!process.env.GOOGLE_CLIENT_ID?.endsWith(".apps.googleusercontent.com") || Buffer.byteLength(process.env.GOOGLE_CLIENT_SECRET || "") < 16) errors.push("Google OAuth configuration incomplete");
   const senderDomain = (process.env.EMAIL_SENDER_DOMAIN || "").toLowerCase(); const mailbox = (process.env.EMAIL_FROM || "").match(/<([^<>]+)>$/)?.[1] || process.env.EMAIL_FROM || "";
   if (!process.env.EMAIL_REPLY_TO || !senderDomain || !mailbox.toLowerCase().endsWith(`@${senderDomain}`)) errors.push("system email sender and Reply-To contract incomplete");
-  // Optional. Invalid falls back to the barber's account address at runtime, so catch the typo here.
-  if (process.env.ORGANIZER_NOTIFICATION_EMAIL && !/^[^@\s<>]+@[^@\s.<>]+(?:\.[^@\s.<>]+)+$/.test(process.env.ORGANIZER_NOTIFICATION_EMAIL)) errors.push("ORGANIZER_NOTIFICATION_EMAIL must be a bare mailbox address");
 }
 if (errors.length) { console.error(`Production configuration rejected (${errors.length} invariant violations).`); process.exit(1); }
 console.log(`Production ${mode} configuration contract passed without printing values.`);
