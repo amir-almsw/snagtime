@@ -38,6 +38,10 @@ export default async function BookingDirectoryPage() {
             ))}
           </ul>
         )}
+        {/* The only route back to an existing appointment for someone on a new device or past their
+            30-day manage cookie. A single-service studio redirects straight past this page, which is why
+            the same link also sits in the booking flow's own header. */}
+        <p className="manage-lookup-foot"><Link href="/manage">Already booked? Manage your appointment</Link></p>
       </main>
     </div>
   );

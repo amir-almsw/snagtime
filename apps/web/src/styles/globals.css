@@ -131,3 +131,8 @@ a.back-link{text-decoration:none;width:fit-content}
 .header-back-link:focus-visible{outline:3px solid rgba(37,99,235,.18);outline-offset:1px}
 /* The header becomes a two-part bar wherever a back target exists; unchanged where it does not. */
 .public-header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+/* "My appointment" in the public booking header. Sits beside the timezone selector, which owns the
+   header's last child and its 5px gap -- hence the explicit right margin rather than relying on that. */
+.header-manage-link{margin-right:10px;padding:5px 9px;border-radius:7px;font-size:11px;font-weight:700;color:var(--brand-dark);text-decoration:none;white-space:nowrap}
+.header-manage-link:hover{background:var(--brand-soft)}
+.header-manage-link:focus-visible{outline:3px solid rgba(37,99,235,.18);outline-offset:1px}
