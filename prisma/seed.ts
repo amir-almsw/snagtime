@@ -55,7 +55,7 @@ async function main() {
       slug: "strategy-call",
       description: "A focused conversation about your next best move.",
       durationMinutes: 30,
-      color: "#2563EB",
+      color: "#C11427",
       locationType: "CUSTOM",
       locationValue: "At the studio",
     },
@@ -87,7 +87,7 @@ async function main() {
       slug: "paid-strategy-session",
       description: "A focused working session for solo experts building a more reliable offer and booking flow.",
       durationMinutes: 60,
-      color: "#2563EB",
+      color: "#C11427",
       locationType: "GOOGLE_MEET",
       minimumNoticeMinutes: 120,
       bookingWindowDays: 30,
@@ -108,7 +108,7 @@ async function main() {
   await prisma.workspaceBranding.upsert({
     where: { workspaceId: workspace.id },
     update: {},
-    create: { workspaceId: workspace.id, userId: host.id, workspaceName: "Dvision Studio", accentColor: "#2563EB", description: "Precision cuts, grooming, and styling by appointment." },
+    create: { workspaceId: workspace.id, userId: host.id, workspaceName: "Dvision Studio", accentColor: "#C11427", description: "Precision cuts, grooming, and styling by appointment." },
   });
 }
 

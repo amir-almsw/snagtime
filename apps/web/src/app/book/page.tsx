@@ -21,7 +21,7 @@ export default async function BookingDirectoryPage() {
   // is where the card lives -- with that one service still one click away.
   if (only && !lastBooking) redirect(`/book/${only.slug}`);
   return (
-    <div className="auth-page">
+    <div className="auth-page dvision">
       <main className="auth-card">
         <BrandMark />
         <div><span className="outcome-eyebrow">Book an appointment</span><h1>What are we doing today?</h1><p>{events.length ? "Choose your service and we’ll show you what’s open." : "The book is closed right now. Check back soon, or get in touch with the studio."}</p></div>

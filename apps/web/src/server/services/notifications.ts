@@ -236,27 +236,27 @@ function clientBody(kind: string, payload: Record<string, unknown>, manageUrl: s
   const name = String(payload.inviteeName || "").trim().split(/\s+/)[0];
   const greeting = name ? `${name}, ` : "";
   if (kind === "BOOKING_CANCELLED") return {
-    preheader: `Canceled — was ${when}`, heading: "Your appointment is canceled",
+    preheader: `Canceled — was ${when}`, eyebrow: "Appointment canceled", heading: "Your appointment is canceled",
     intro: `${greeting}your ${title} has been canceled. Nothing further is needed from you.`,
     details: clientDetails(payload, "Was booked for"), action: { label: "Book another appointment", href: `${base}/book` }, note: REPLY_NOTE,
   };
   if (kind === "BOOKING_RESCHEDULED") return {
-    preheader: `Moved to ${when}`, heading: "Your appointment has moved",
+    preheader: `Moved to ${when}`, eyebrow: "New time confirmed", heading: "Your appointment has moved",
     intro: `${greeting}your ${title} has moved. The new time is below — nothing else has changed.`,
     details: clientDetails(payload, "New time"), action: { label: "Reschedule or cancel", href: manageUrl }, note: REPLY_NOTE,
   };
   if (kind === "BOOKING_REMINDER") return {
-    preheader: `${when} — ${String(payload.location || "see you soon")}`, heading: "See you soon",
+    preheader: `${when} — ${String(payload.location || "see you soon")}`, eyebrow: "Coming up", heading: "See you soon",
     intro: `${greeting}a reminder that your ${title} is coming up.`,
     details: clientDetails(payload, "When"), action: { label: "Reschedule or cancel", href: manageUrl }, note: REPLY_NOTE,
   };
   if (kind === "BOOKING_RECOVERY") return {
-    preheader: "Your link to reschedule or cancel", heading: "Here is your appointment",
+    preheader: "Your link to reschedule or cancel", eyebrow: "Manage my appointment", heading: "Here is your appointment",
     intro: `${greeting}use the button below to reschedule or cancel your ${title}.`,
     details: clientDetails(payload, "When"), action: { label: "Manage my appointment", href: manageUrl }, note: REPLY_NOTE,
   };
   return {
-    preheader: `${when} — ${String(payload.location || "confirmed")}`, heading: "You’re booked in",
+    preheader: `${when} — ${String(payload.location || "confirmed")}`, eyebrow: "Appointment confirmed", heading: "You’re booked in",
     intro: `${greeting}your ${title} is confirmed. We will see you then.`,
     details: clientDetails(payload, "When"), action: { label: "Reschedule or cancel", href: manageUrl },
     note: `Plans change — the button above works right up until your appointment. ${REPLY_NOTE}`,

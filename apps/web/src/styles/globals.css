@@ -136,3 +136,94 @@ a.back-link{text-decoration:none;width:fit-content}
 .header-manage-link{margin-right:10px;padding:5px 9px;border-radius:7px;font-size:11px;font-weight:700;color:var(--brand-dark);text-decoration:none;white-space:nowrap}
 .header-manage-link:hover{background:var(--brand-soft)}
 .header-manage-link:focus-visible{outline:3px solid rgba(37,99,235,.18);outline-offset:1px}
+
+/* ===== DVISION client surface =====
+   The pages a client sees are the booking half of dvision.studio, so they wear its identity rather
+   than the dashboard's: near-black ground, bone text, crimson accent, display type tracked tight,
+   micro-labels in wide-tracked uppercase mono, and square corners throughout. Scoped to an explicit
+   .dvision class on the client-facing roots -- .auth-page is shared with the organizer sign-in, so
+   theming by that selector would drag the dashboard in with it.
+   This surface is dark in both appearances on purpose: the studio's own site has no light mode, and a
+   bone-on-white booking page beside a black website reads as a different company. */
+.dvision{
+  --ink:#F2F0EB;--muted:#96938D;--subtle:#7C7973;
+  --line:#232120;--line-strong:#332F2E;
+  --surface:#0C0C0C;--canvas:#050505;--surface-muted:#121110;
+  --brand:#C11427;--brand-dark:#DF2538;--brand-soft:#1B0A0C;
+  --blue:#C11427;--blue-soft:#1B0A0C;--green:#C11427;--green-soft:#1B0A0C;
+  --radius:0px;--radius-sm:0px;--shadow:none;--shadow-lg:none;
+  color:var(--ink);
+  font-family:Manrope,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+/* The ground behind the wrapper, and the dashboard's appearance switch, which has nothing to toggle
+   here: this surface commits to one look. */
+body:has(.dvision){background:#050505}
+body:has(.dvision) .theme-toggle{display:none}
+.dvision.auth-page,.dvision.public-page{background:#050505}
+
+/* Display type: Syne, tracked tight, the way the site sets every headline. */
+.dvision h1,.dvision h2,.dvision .brand-name{font-family:Syne,Manrope,ui-sans-serif,sans-serif}
+.dvision h1{font-weight:600;letter-spacing:-.04em;line-height:1.08}
+.dvision h2{font-weight:600;letter-spacing:-.03em}
+
+/* Micro-labels: DM Mono, uppercase, wide. The site uses these as section indices and eyebrows. */
+.dvision .outcome-eyebrow,.dvision .preview-label,.dvision .manage-lookup-modes button,.dvision .header-manage-link{
+  font-family:"DM Mono",ui-monospace,SFMono-Regular,monospace;font-size:10px;font-weight:500;
+  letter-spacing:.18em;text-transform:uppercase;
+}
+.dvision .outcome-eyebrow{color:var(--brand)}
+
+/* The wordmark is typographic on the site, not a glyph. */
+.dvision .brand-mark{display:none}
+.dvision .brand-name{font-size:14px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--ink)}
+
+.dvision .auth-card{background:#0C0C0C;border:1px solid var(--line);border-top:2px solid var(--brand);border-radius:0;box-shadow:none;padding:34px 30px}
+
+/* Buttons: square, crimson, tiny wide-tracked uppercase -- .booking-button on the site. */
+.dvision .button{border-radius:0;font-family:"DM Mono",ui-monospace,monospace;font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;padding:15px 22px}
+.dvision .button-primary{background:var(--brand);border-color:#DF2538;color:#fff;box-shadow:none}
+.dvision .button-primary:hover:not(:disabled){background:#DF2538}
+.dvision .button-secondary{background:transparent;border:1px solid var(--line-strong);color:var(--ink)}
+.dvision .button-secondary:hover:not(:disabled){border-color:var(--ink)}
+
+/* Fields sit on the ground, outlined by a hairline, never a rounded white pill. */
+.dvision input,.dvision select,.dvision textarea{background:#080808;border:1px solid #2A2725;border-radius:0;color:var(--ink)}
+.dvision input::placeholder,.dvision textarea::placeholder{color:#5F5C57}
+.dvision input:focus-visible,.dvision select:focus-visible,.dvision textarea:focus-visible,.dvision .button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.dvision label{font-size:12px;letter-spacing:.02em}
+.dvision small{color:var(--muted)}
+.dvision .form-error{background:#1B0A0C;border:1px solid #3A1116;border-radius:0;color:#F0A7AE}
+/* The dashboard's field and button rules carry more specificity than a single .dvision prefix, so the
+   ones the client pages actually use are restated at matching weight rather than with !important. */
+.dvision .auth-card form input,.dvision .auth-card form select,.dvision .auth-card form textarea,
+.dvision .field input,.dvision .field select,.dvision .field textarea{background:#080808;border:1px solid #2A2725;border-radius:0;color:var(--ink)}
+.dvision .button.button-primary:disabled{background:#2B0C10;border-color:#2B0C10;color:#8C7376;opacity:1}
+.dvision .button.button-secondary:disabled{background:transparent;border-color:var(--line);color:var(--subtle);opacity:1}
+/* Anything the dashboard paints white would read as a hole punched in the ground. */
+.dvision .search-field,.dvision .input-prefix,.dvision .input-prefix input,.dvision .duration-input,.dvision .money-input,
+.dvision .booking-calendar,.dvision .mini-booking-card,.dvision .booking-info,.dvision .slot-list,.dvision .duration-options button{
+  background:#0A0A0A;border-color:var(--line);color:var(--ink);
+}
+/* Surfaces the booking flow paints light. Each is restated at a weight that clears the original
+   rule, which is why the selectors look repetitive -- .duration-options button.is-selected needs
+   three classes and an element to beat its own two and one. */
+.dvision .public-header{background:#050505;border-bottom:1px solid var(--line)}
+.dvision .booking-shell{background:#0C0C0C;border:1px solid var(--line);border-radius:0}
+.dvision .calendar-week{background:#0A0A0A}
+.dvision .booking-calendar{border-radius:0}
+.dvision .duration-options button{background:#0A0A0A;border:1px solid var(--line);border-radius:0;color:var(--ink)}
+.dvision .duration-options button.is-selected{background:#1B0A0C;border-color:var(--brand)}
+.dvision .confirmation-card,.dvision .manage-summary,.dvision .current-booking,.dvision .manage-form,.dvision .reschedule-picker{background:#0C0C0C;border:1px solid var(--line);border-radius:0}
+.dvision .booking-info{background:#0A0A0A;border-color:var(--line)}
+.dvision .public-link:hover,.dvision .booking-row:hover{background:#141312}
+.dvision .slot-grid button,.dvision .slot-list button{border-radius:0}
+/* The studio's own header is a wordmark, not a lettered tile. */
+.dvision .public-logo{display:none}
+.dvision .public-workspace-brand strong{font-family:Syne,Manrope,sans-serif;font-size:14px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--ink)}
+/* Native controls -- the timezone select, date pickers, scrollbars -- take their chrome from the OS
+   unless the surface declares which appearance it is. Without this the select renders as a light
+   control on the black ground. */
+.dvision{color-scheme:dark}
+.dvision .time-grid button{border-radius:0;background:#0A0A0A;border:1px solid var(--line);color:var(--ink)}
+.dvision .time-grid button:hover:not(:disabled){border-color:var(--brand)}
+.dvision .time-grid button.is-selected{background:#1B0A0C;border-color:var(--brand);color:var(--ink)}

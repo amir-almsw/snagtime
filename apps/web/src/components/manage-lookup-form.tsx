@@ -29,7 +29,7 @@ export function ManageLookupForm() {
 
   if (sent) {
     return (
-      <div className="auth-page">
+      <div className="auth-page dvision">
         <main className="auth-card">
           <BrandMark />
           <div>
@@ -49,7 +49,7 @@ export function ManageLookupForm() {
   }
 
   return (
-    <div className="auth-page">
+    <div className="auth-page dvision">
       <main className="auth-card">
         <BrandMark />
         <div>

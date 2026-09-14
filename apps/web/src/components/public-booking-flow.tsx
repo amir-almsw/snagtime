@@ -230,14 +230,14 @@ export function PublicBookingFlow({ slug, showServiceSwitch = false }: { slug: s
     } finally { setSubmitting(false); }
   }
 
-  if (loadingEvent) return <div className="public-page"><header className="public-header"><BrandMark /></header><main className="outcome-shell" role="status"><span className="spinner" /><p>Opening the book…</p></main></div>;
-  if (!event || !duration) return <div className="public-page"><header className="public-header"><BrandMark /></header><main className="outcome-shell"><h1>This service isn’t bookable right now</h1><p>{error || "No times are set up for this service yet. Contact the studio and we’ll take care of you."}</p>{showServiceSwitch && <p><Link href="/book" className="back-link"><Icon name="arrow-left" />Choose another service</Link></p>}</main></div>;
+  if (loadingEvent) return <div className="public-page dvision"><header className="public-header"><BrandMark /></header><main className="outcome-shell" role="status"><span className="spinner" /><p>Opening the book…</p></main></div>;
+  if (!event || !duration) return <div className="public-page dvision"><header className="public-header"><BrandMark /></header><main className="outcome-shell"><h1>This service isn’t bookable right now</h1><p>{error || "No times are set up for this service yet. Contact the studio and we’ll take care of you."}</p>{showServiceSwitch && <p><Link href="/book" className="back-link"><Icon name="arrow-left" />Choose another service</Link></p>}</main></div>;
   const branding = event.branding;
   // A service with one duration has nothing to choose on this screen, so the chooser is not rendered and the
   // date heading takes the step focus instead; the aside already states the duration and price.
   const chooseDuration = event.durations.length > 1;
 
-  return <div className="public-page">
+  return <div className="public-page dvision">
     <header className="public-header"><div className="public-workspace-brand"><PublicBrandLogo branding={branding} /><strong>{branding?.workspaceName || "Dvision Studio"}</strong></div><div><Link className="header-manage-link" href="/manage">My appointment</Link><Icon name="globe" /><select value={timezone} onChange={(item) => { setLoadingSlots(true); resetScheduleProgress(); setTimezone(item.target.value); }} aria-label="Booking timezone">{timeZones.map((zone) => <option value={zone} key={zone}>{timeZoneLabel(zone)}</option>)}</select></div></header>
     <main className="booking-shell">
       <aside className="booking-info">{showServiceSwitch && <Link href="/book" className="back-link"><Icon name="arrow-left" />Change service</Link>}<span className="host-label">At {branding?.workspaceName || "Dvision Studio"}</span><h1>{event.title}</h1><p>{event.description}</p>{branding?.description && <p className="workspace-description">{branding.description}</p>}<div className="public-meta"><span><Icon name="clock" />{duration.label}</span><span><Icon name="video" />{event.location}</span><span><Icon name="globe" />{timeZoneLabel(timezone)}</span>{paid && <span><Icon name="sparkles" />{priceLabel(duration.price ?? 0)} · pay at the shop</span>}</div><div className="booking-safe-note"><Icon name="check" /><span>Your chair is held the moment you book. No account, no deposit.</span></div></aside>

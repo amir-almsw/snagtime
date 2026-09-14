@@ -5,7 +5,7 @@ import { renderEmailHtml, renderEmailText, safeAccent } from "@/server/services/
 import { enqueueBookingEmail, failureCode, processEmailOutbox, type EmailDelivery, type EmailProvider } from "@/server/services/notifications";
 
 const brand = { name: "Dvision Studio", accentColor: "#2563EB", footerText: "Herengracht 1, Amsterdam" };
-const body = { preheader: "Sunday at 14:00", heading: "You’re booked in", intro: "See you then.", details: [{ label: "Service", value: "Master Haircut" }], action: { label: "Reschedule or cancel", href: "https://book.example.invalid/manage/abc#recovery=tok" }, note: "Reply any time." };
+const body = { preheader: "Sunday at 14:00", eyebrow: "Appointment confirmed", heading: "You’re booked in", intro: "See you then.", details: [{ label: "Service", value: "Master Haircut" }], action: { label: "Reschedule or cancel", href: "https://book.example.invalid/manage/abc#recovery=tok" }, note: "Reply any time." };
 
 const bookingIds: string[] = [];
 class CaptureProvider implements EmailProvider { messages: EmailDelivery[] = []; async send(message: EmailDelivery) { this.messages.push(message); } }
@@ -52,7 +52,7 @@ describe("client email templates", () => {
 
   it("falls back to the default accent rather than writing an unvalidated colour into a style attribute", () => {
     expect(safeAccent("#123ABC")).toBe("#123ABC");
-    for (const bad of ["red;}</style><script>", "#12345", "", null, undefined]) expect(safeAccent(bad)).toBe("#2563EB");
+    for (const bad of ["red;}</style><script>", "#12345", "", null, undefined]) expect(safeAccent(bad)).toBe("#C11427");
   });
 
   it("carries the appointment, the reference and the manage link in both parts of a confirmation", async () => {

@@ -13,7 +13,7 @@ export function mapBranding(row: WorkspaceBranding): WorkspaceBranding {
 
 export async function getBranding(workspaceId: string): Promise<WorkspaceBranding> {
   const workspace = await db.workspace.findUniqueOrThrow({ where: { id: workspaceId }, include: { branding: true } });
-  return workspace.branding ? mapBranding(workspace.branding) : { workspaceName: workspace.name, logoUrl: null, accentColor: "#2563EB", description: null, footerText: null };
+  return workspace.branding ? mapBranding(workspace.branding) : { workspaceName: workspace.name, logoUrl: null, accentColor: "#C11427", description: null, footerText: null };
 }
 
 export async function setBranding(workspaceId: string, userId: string, input: WorkspaceBranding): Promise<WorkspaceBranding> {
