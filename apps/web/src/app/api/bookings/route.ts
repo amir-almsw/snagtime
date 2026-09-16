@@ -17,9 +17,12 @@ export async function GET(request: Request) {
 // unchecked one to createBooking would let an organizer book into another studio's calendar.
 export async function POST(request: Request) {
   try {
-    await enforceRateLimit(`host-booking:ip:${clientAddress(request)}`, 60, 60_000);
+    // Both budgets must be a pair already present in tempocove_rate_policy: the production limiter
+    // returns false for any (limit, window) it does not recognise, which reaches the caller as a 429
+    // on the very first request. Never invent a new pair without registering it in postgres-guards.sql.
+    await enforceRateLimit(`host-booking:ip:${clientAddress(request)}`, 30, 60_000);
     const access = await requireWorkspaceMutationAccess(request, "ADMIN");
-    await enforceRateLimit(`host-booking:workspace:${access.workspaceId}`, 60, 60_000);
+    await enforceRateLimit(`host-booking:workspace:${access.workspaceId}`, 30, 60_000);
     const idempotencyKey = request.headers.get("idempotency-key");
     if (!idempotencyKey || !/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) throw new AppError("INVALID_IDEMPOTENCY_KEY", "A valid Idempotency-Key header is required.", 400);
     const { eventTypeId, ...input } = hostBookingInput.parse(await jsonBody(request));
