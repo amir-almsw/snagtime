@@ -78,6 +78,9 @@ export type CreateBookingInput = {
   startAt: string; inviteeName: string; inviteeEmail: string; inviteeTimeZone: string;
   notes?: string; durationId?: string; answers?: Array<{ questionId: string; value: unknown }>;
 };
+// The organizer's own booking form posts to the dashboard collection, so the event type travels by id
+// inside the workspace rather than by public slug.
+export type HostBookingInput = CreateBookingInput & { eventTypeId: string };
 export type CreateBookingResult = {
   bookingId: string; status: BookingSummary["status"]; checkoutUrl: string | null;
   checkoutState: "NOT_REQUIRED" | "READY" | "RETRY_REQUIRED";

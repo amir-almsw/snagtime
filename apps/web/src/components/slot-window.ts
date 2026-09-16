@@ -54,6 +54,10 @@ export async function loadBookingWindowSlots(slug: string, bookingWindowDays: nu
   return loadRanges(bookingWindowRanges(bookingWindowDays), (range, activeSignal) => frontendApi.getSlots(slug, range.from, range.to, timeZone, durationId, activeSignal), signal);
 }
 
+export async function loadHostWindowSlots(eventTypeId: string, bookingWindowDays: number, timeZone: string, durationId?: string, signal?: AbortSignal) {
+  return loadRanges(bookingWindowRanges(bookingWindowDays), (range, activeSignal) => frontendApi.getHostSlots(eventTypeId, range.from, range.to, timeZone, durationId, activeSignal), signal);
+}
+
 export async function loadRescheduleWindowSlots(bookingId: string, bookingWindowDays: number, timeZone: string, durationId?: string, signal?: AbortSignal) {
   return loadRanges(bookingWindowRanges(bookingWindowDays), (range, activeSignal) => frontendApi.getRescheduleSlots(bookingId, range.from, range.to, timeZone, durationId, activeSignal), signal);
 }

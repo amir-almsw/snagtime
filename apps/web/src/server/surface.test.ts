@@ -7,6 +7,12 @@ describe("origin surface enforcement", () => {
       expect(surfaceAllows("book", path), path).toBe(false);
     }
   });
+  it("keeps the dashboard's own booking form off the booking origin", () => {
+    // POST /api/bookings creates a booking as the organizer, and the slot list behind that form reads
+    // an event type by workspace id; neither belongs on the anonymous booking host.
+    expect(surfaceAllows("book", "/api/event-types/abc/slots")).toBe(false);
+    expect(surfaceAllows("admin", "/api/event-types/abc/slots")).toBe(true);
+  });
   it("keeps the organizer booking collection off the booking origin without hiding the manage routes", () => {
     expect(surfaceAllows("book", "/api/bookings")).toBe(false);
     expect(surfaceAllows("admin", "/api/bookings")).toBe(true);

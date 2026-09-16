@@ -17,8 +17,8 @@ async function twoFreeSlots() {
   if (!second) throw new Error("No non-overlapping second slot was available.");
   return { first, second };
 }
-async function book(email: string, start: string) {
-  const result = await createBooking("strategy-call", { startAt: start, inviteeName: "One Booking", inviteeEmail: email, inviteeTimeZone: "Europe/Amsterdam" }, `one-booking-${randomUUID()}`);
+async function book(email: string, start: string, options?: Parameters<typeof createBooking>[5]) {
+  const result = await createBooking("strategy-call", { startAt: start, inviteeName: "One Booking", inviteeEmail: email, inviteeTimeZone: "Europe/Amsterdam" }, `one-booking-${randomUUID()}`, undefined, undefined, options);
   created.push(result.booking.id);
   return result;
 }
@@ -56,6 +56,25 @@ describe("one live appointment per client", () => {
     await cancelBooking(initial.booking.id, "Something came up");
     const again = await book(email, second.start);
     expect(again.booking.status).toBe("CONFIRMED");
+  });
+
+  // The studio booking on a client's behalf from its own dashboard is the authority over its own
+  // chairs: it books a regular's next appointment while the current one is still ahead of them.
+  it("lets the studio book a second appointment for a client who already has one", async () => {
+    const { first, second } = await twoFreeSlots();
+    const email = `studio-added-${randomUUID()}@example.invalid`;
+    await book(email, first.start);
+    const added = await book(email, second.start, { allowSecondActiveBooking: true });
+    expect(added.booking.status).toBe("CONFIRMED");
+    expect(await db.booking.count({ where: { inviteeEmail: email } })).toBe(2);
+  });
+
+  it("still refuses a time that is not open, even when the studio adds the booking", async () => {
+    const { first } = await twoFreeSlots();
+    const email = `studio-clash-${randomUUID()}@example.invalid`;
+    await book(email, first.start);
+    // The first booking now occupies that slot, so the same start is no longer on the open list.
+    await expect(book(`clash-${randomUUID()}@example.invalid`, first.start, { allowSecondActiveBooking: true })).rejects.toMatchObject({ status: 409 });
   });
 
   it("ignores appointments that have already concluded", async () => {

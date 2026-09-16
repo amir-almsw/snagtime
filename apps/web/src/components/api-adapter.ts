@@ -1,7 +1,7 @@
 "use client";
 
 import { snagTimeApi } from "@/lib/api-client";
-import type { AvailabilityOverride, AvailabilitySchedule, BookingSlot, BookingSummary, CreateEventTypeInput, EventTypeSummary } from "@/lib/contracts";
+import type { AvailabilityOverride, AvailabilitySchedule, BookingSlot, BookingSummary, CreateEventTypeInput, EventTypeSummary, HostBookingInput } from "@/lib/contracts";
 import type { AvailabilityDay, Booking, EventType } from "./demo-data";
 
 export function mapEventType(item: EventTypeSummary): EventType {
@@ -138,6 +138,8 @@ export const frontendApi = {
   async getAvailability() { const schedule = await snagTimeApi.getAvailability(); return { days: mapAvailability(schedule), timeZone: schedule.timeZone, overrides: schedule.overrides ?? [] }; },
   async saveAvailability(days: AvailabilityDay[], timeZone: string, overrides: AvailabilityOverride[]) { const schedule = await snagTimeApi.setAvailability({ ...toAvailability(days, timeZone), overrides }); return { days: mapAvailability(schedule), timeZone: schedule.timeZone, overrides: schedule.overrides ?? [] }; },
   async listBookings(organizerTimeZone?: string) { return (await snagTimeApi.listBookings()).map((item) => mapBooking(item, organizerTimeZone)); },
+  async createHostBooking(input: HostBookingInput, idempotencyKey?: string, organizerTimeZone?: string) { return mapBooking(await snagTimeApi.createHostBooking(input, idempotencyKey), organizerTimeZone); },
+  async getHostSlots(eventTypeId: string, from: string, to: string, timeZone: string, durationId?: string, signal?: AbortSignal): Promise<BookingSlot[]> { return snagTimeApi.getHostSlots(eventTypeId, from, to, timeZone, durationId, signal); },
   enterClientGate: snagTimeApi.enterClientGate,
   async getPublicEvent(slug: string) { return mapEventType(await snagTimeApi.getPublicEventType(slug)); },
   async getSlots(slug: string, from: string, to: string, timeZone: string, durationId?: string, signal?: AbortSignal): Promise<BookingSlot[]> { return snagTimeApi.getSlots(slug, from, to, timeZone, durationId, signal); },

@@ -168,9 +168,16 @@ async function ensureCheckoutLinked(bookingId: string, payments: PaymentService)
   return (await db.booking.findUniqueOrThrow({ where: { id: booking.id } })).stripeCheckoutUrl;
 }
 
+// The one-live-appointment rule stops an anonymous client from quietly holding two chairs. The studio
+// booking from its own dashboard is the authority over its own calendar, so it books a regular's next
+// appointment while the current one is still ahead of them. Every other guard -- the slot has to be
+// genuinely free, the answers valid, the buffers honoured -- applies unchanged.
+export type CreateBookingOptions = { allowSecondActiveBooking?: boolean };
+
 export async function createBooking(
   slug: string, input: CreateBookingInput, idempotencyKey: string,
   calendar: CalendarService = getCalendarService(), payments: PaymentService = getPaymentService(),
+  options: CreateBookingOptions = {},
 ): Promise<InternalCreateBookingResult> {
   const requestFingerprint = createHash("sha256").update(JSON.stringify({ slug, ...input })).digest("hex");
   const eventType = await withDatabaseTransactionRetry(() => getEventTypeBySlug(slug));
@@ -183,7 +190,7 @@ export async function createBooking(
     }
     return prior;
   }
-  const existing = await withDatabaseTransactionRetry(() => activeBookingIdForEmail(eventType.workspaceId, input.inviteeEmail));
+  const existing = options.allowSecondActiveBooking ? null : await withDatabaseTransactionRetry(() => activeBookingIdForEmail(eventType.workspaceId, input.inviteeEmail));
   if (existing) throw activeBookingConflict(existing);
   const duration = input.durationId ? eventType.durations.find((item) => item.id === input.durationId) : eventType.durations.find((item) => item.isDefault);
   if (!duration) throw notFound("Duration option");

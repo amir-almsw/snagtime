@@ -91,6 +91,11 @@ export const bookingInput = z.object({
   answers: z.array(z.object({ questionId: z.string().min(1).max(100), value: z.unknown() })).max(20).optional(),
 });
 
+// The organizer books on behalf of a client from the dashboard. Same shape as a public booking plus
+// the event type, which is resolved inside the caller's own workspace before the slug reaches
+// createBooking -- a globally unique slug must never let one workspace book into another's calendar.
+export const hostBookingInput = bookingInput.extend({ eventTypeId: z.string().min(1).max(100) });
+
 export const demoLoginInput = z.object({ email: z.email().transform((value) => value.toLowerCase()), password: z.string().min(1).max(200) });
 export const clientGateInput = z.object({ password: z.string().min(1).max(200) }).strict();
 const strongPassword = z.string().min(12).max(200).refine((value) => /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value) && /[^A-Za-z0-9]/.test(value), "Use upper, lower, number, and symbol.");
