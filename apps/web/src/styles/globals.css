@@ -121,7 +121,6 @@ a:focus-visible,button:focus-visible,[role=button]:focus-visible,[role=tab]:focu
 .day-chip{display:block;width:100%;padding:2px 5px;border-radius:5px;background:var(--brand-soft);color:var(--brand-dark);font-size:9px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .day-chip i{font-style:normal;font-weight:700;margin-right:4px}
 .day-chip.is-pending{background:var(--amber-soft);color:#965c10}
-.day-chip.is-canceled{background:var(--red-soft);color:#b74440;text-decoration:line-through}
 .day-chip-more{padding:0 5px;font-size:9px;color:var(--muted)}
 .day-agenda{display:flex;flex-direction:column;min-width:0}
 .day-agenda>header{display:flex;flex-direction:column;gap:2px;padding:14px 18px;border-bottom:1px solid var(--line)}
@@ -133,14 +132,12 @@ a:focus-visible,button:focus-visible,[role=button]:focus-visible,[role=tab]:focu
 .agenda-row>span{display:flex;flex-direction:column;min-width:0}
 .agenda-row strong{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .agenda-row small{font-size:10px;color:var(--muted)}
-.agenda-row.is-canceled .agenda-body strong{color:var(--muted);text-decoration:line-through}
 @media(max-width:1120px){.calendar-body{grid-template-columns:1fr}.month-grid{border-right:0;border-bottom:1px solid var(--line)}}
 @media(max-width:820px){.month-day{min-height:56px}.month-day-chips{display:none}.month-day-count{display:inline-grid}}
 @media(max-width:540px){.calendar-nav{flex-wrap:wrap}.month-grid{padding:8px}.month-weekdays,.month-days{gap:3px}.month-day{min-height:46px;padding:4px}.month-day-number{min-width:20px;height:20px;font-size:10px}.month-day-count{right:3px;top:3px}.agenda-row{grid-template-columns:minmax(0,1fr) auto;gap:6px 12px}.agenda-row>.agenda-time{grid-column:1/-1}}
 :root[data-theme=dark] .month-day:hover,:root[data-theme=dark] .agenda-row:hover{background:#232a36}
 :root[data-theme=dark] .month-day.is-today .month-day-number{color:#0f1319}
 :root[data-theme=dark] .day-chip.is-pending{color:var(--amber)}
-:root[data-theme=dark] .day-chip.is-canceled{color:var(--red)}
 /* .booking-brand keeps a bottom margin from its sidebar origin; inside the fixed-height header that
    margin is centred with the box and pins the lockup to the top edge. */
 .public-header .booking-brand{margin-bottom:0}

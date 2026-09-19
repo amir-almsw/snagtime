@@ -13,11 +13,13 @@ const chipLimit = 3;
 // `anchorDay`; the parent remounts the calendar (by key) when the anchor should win again -- first
 // load, or a booking deep-linked from the dashboard -- so the barber's own navigation is never yanked
 // away mid-look. Every date is a civil date in the studio timezone; the browser's zone plays no part.
+// Canceled bookings never appear here: they only clutter a day the barber is planning around, and the
+// list layout still shows them for the record.
 export function BookingsCalendar({ bookings, timeZone, anchorDay, onOpen }: { bookings: Booking[]; timeZone: string; anchorDay: string; onOpen: (booking: Booking, trigger: HTMLButtonElement) => void }) {
   const [month, setMonth] = useState<CalendarMonth>(() => monthOf(anchorDay));
   const [selectedDay, setSelectedDay] = useState(anchorDay);
   const today = useMemo(() => dayKey(new Date(), timeZone), [timeZone]);
-  const groups = useMemo(() => groupByDay(bookings, timeZone), [bookings, timeZone]);
+  const groups = useMemo(() => groupByDay(bookings.filter((booking) => booking.status !== "canceled"), timeZone), [bookings, timeZone]);
   const cells = useMemo(() => monthCells(month), [month]);
   const timeFormatter = useMemo(() => new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }), [timeZone]);
   const monthCount = cells.reduce((total, cell) => total + (cell ? groups.get(cell.key)?.length ?? 0 : 0), 0);
