@@ -111,6 +111,10 @@ test("@axe keyboard focus, modal trap, Escape return and mobile navigation", asy
   const bookingLabel = `keyboard-${test.info().project.name}`;
   await createManagedBooking(context, bookingLabel);
   await page.goto("/bookings");
+  await expect(page.getByRole("region", { name: "Bookings calendar" })).toBeVisible();
+  const listToggle = page.getByRole("button", { name: "List", exact: true });
+  await listToggle.focus(); await page.keyboard.press("Enter");
+  await expect(listToggle).toHaveAttribute("aria-pressed", "true");
   const row = page.locator(".booking-table-row").filter({ has: page.getByText(`Invitee ${bookingLabel}`, { exact: true }) });
   await expect(row).toHaveCount(1);
   await row.focus(); await page.keyboard.press("Enter");

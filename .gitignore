@@ -23,3 +23,6 @@ runtime/
 test.env
 compose.local-test.yml
 production.env
+
+# macOS Finder metadata.
+.DS_Store

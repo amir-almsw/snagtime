@@ -95,6 +95,52 @@ a:focus-visible,button:focus-visible,[role=button]:focus-visible,[role=tab]:focu
 :root[data-theme=dark] .field input,:root[data-theme=dark] .field select,:root[data-theme=dark] .field textarea,:root[data-theme=dark] .auth-card form input,:root[data-theme=dark] .auth-card form select,:root[data-theme=dark] .toolbar select,:root[data-theme=dark] .search-field input,:root[data-theme=dark] .duration-row select,:root[data-theme=dark] .time-window select,:root[data-theme=dark] .bookings-toolbar select{color:var(--ink)}
 :root[data-theme=dark] .integration-mark{background:var(--surface-muted)!important}
 :root[data-theme=dark] .brand-logo-thumb,:root[data-theme=dark] .workspace-logo,:root[data-theme=dark] .uploaded-brand-logo{background:#f6f7fa}
+
+/* Bookings calendar: the month grid beside the selected day's agenda. Cells are studio-timezone civil
+   dates. Chips give way to a count on narrow screens so seven columns never overflow a phone. */
+.bookings-calendar{overflow:hidden}
+.calendar-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.calendar-nav>div:first-child{display:flex;flex-direction:column;gap:2px;min-width:0}
+.calendar-nav h2{margin:0;font-size:16px}
+.calendar-nav>div:first-child>span{font-size:11px;color:var(--muted)}
+.calendar-nav-actions{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.calendar-nav-actions>.button{margin-right:6px}
+.calendar-body{display:grid;grid-template-columns:minmax(0,1fr) 320px}
+.month-grid{min-width:0;padding:12px;border-right:1px solid var(--line)}
+.month-weekdays,.month-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.month-weekdays span{padding:4px 0 8px;text-align:center;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.month-day{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-height:92px;min-width:0;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);text-align:left}
+.month-day.is-blank{border-color:transparent;background:transparent}
+.month-day:hover{background:var(--canvas)}
+.month-day.is-selected{border-color:var(--brand);box-shadow:0 0 0 2px var(--brand-soft)}
+.month-day-number{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 5px;border-radius:999px;font-size:11px;font-weight:700}
+.month-day.is-past .month-day-number{color:var(--subtle)}
+.month-day.is-today .month-day-number{background:var(--brand);color:#fff}
+.month-day-count{display:none;position:absolute;right:5px;top:5px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--brand-soft);color:var(--brand-dark);font-size:9px;font-weight:700;place-items:center}
+.month-day-chips{display:flex;flex-direction:column;gap:2px;width:100%;min-width:0}
+.day-chip{display:block;width:100%;padding:2px 5px;border-radius:5px;background:var(--brand-soft);color:var(--brand-dark);font-size:9px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.day-chip i{font-style:normal;font-weight:700;margin-right:4px}
+.day-chip.is-pending{background:var(--amber-soft);color:#965c10}
+.day-chip.is-canceled{background:var(--red-soft);color:#b74440;text-decoration:line-through}
+.day-chip-more{padding:0 5px;font-size:9px;color:var(--muted)}
+.day-agenda{display:flex;flex-direction:column;min-width:0}
+.day-agenda>header{display:flex;flex-direction:column;gap:2px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.day-agenda h3{margin:0;font-size:13px}
+.day-agenda>header span{font-size:11px;color:var(--muted)}
+.day-agenda .empty-state{padding:36px 20px}
+.agenda-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;padding:11px 18px;border:0;border-bottom:1px solid var(--line);background:var(--surface);color:var(--ink);text-align:left}
+.agenda-row:hover{background:var(--canvas)}
+.agenda-row>span{display:flex;flex-direction:column;min-width:0}
+.agenda-row strong{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agenda-row small{font-size:10px;color:var(--muted)}
+.agenda-row.is-canceled .agenda-body strong{color:var(--muted);text-decoration:line-through}
+@media(max-width:1120px){.calendar-body{grid-template-columns:1fr}.month-grid{border-right:0;border-bottom:1px solid var(--line)}}
+@media(max-width:820px){.month-day{min-height:56px}.month-day-chips{display:none}.month-day-count{display:inline-grid}}
+@media(max-width:540px){.calendar-nav{flex-wrap:wrap}.month-grid{padding:8px}.month-weekdays,.month-days{gap:3px}.month-day{min-height:46px;padding:4px}.month-day-number{min-width:20px;height:20px;font-size:10px}.month-day-count{right:3px;top:3px}.agenda-row{grid-template-columns:minmax(0,1fr) auto;gap:6px 12px}.agenda-row>.agenda-time{grid-column:1/-1}}
+:root[data-theme=dark] .month-day:hover,:root[data-theme=dark] .agenda-row:hover{background:#232a36}
+:root[data-theme=dark] .month-day.is-today .month-day-number{color:#0f1319}
+:root[data-theme=dark] .day-chip.is-pending{color:var(--amber)}
+:root[data-theme=dark] .day-chip.is-canceled{color:var(--red)}
 /* .booking-brand keeps a bottom margin from its sidebar origin; inside the fixed-height header that
    margin is centred with the box and pins the lockup to the top edge. */
 .public-header .booking-brand{margin-bottom:0}
