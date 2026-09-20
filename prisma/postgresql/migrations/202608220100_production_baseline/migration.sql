@@ -20,6 +20,7 @@ CREATE TABLE "User" (
 CREATE TABLE "Workspace" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
+    "notificationEmail" TEXT,
     "timeZone" TEXT NOT NULL DEFAULT 'America/Chicago',
     "onboardingCompletedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -166,6 +167,7 @@ CREATE TABLE "WorkspaceBranding" (
 -- CreateTable
 CREATE TABLE "Booking" (
     "id" TEXT NOT NULL,
+    "reference" TEXT,
     "workspaceId" TEXT NOT NULL,
     "eventTypeId" TEXT NOT NULL,
     "hostId" TEXT NOT NULL,
@@ -491,6 +493,9 @@ CREATE INDEX "AvailabilityOverride_workspaceId_userId_dateKey_idx" ON "Availabil
 CREATE UNIQUE INDEX "WorkspaceBranding_workspaceId_key" ON "WorkspaceBranding"("workspaceId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Booking_reference_key" ON "Booking"("reference");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Booking_stripeCheckoutSessionId_key" ON "Booking"("stripeCheckoutSessionId");
 
 -- CreateIndex
@@ -786,7 +791,7 @@ GRANT SELECT,DELETE ON "OAuthConnection" TO tempocove_worker;
 GRANT UPDATE("accessToken","refreshToken","expiresAt","disconnectStatus","disconnectRetryAt","disconnectLeaseToken","disconnectLeaseExpiresAt","disconnectErrorCode","updatedAt") ON "OAuthConnection" TO tempocove_worker;
 GRANT SELECT,INSERT ON "LocalInboxMessage" TO tempocove_worker;
 GRANT SELECT,INSERT,UPDATE ON "WorkerHeartbeat" TO tempocove_worker;
-GRANT SELECT ON "EventType","Workspace","Membership","BookingRecoveryToken","AccountActionToken","WorkspaceInvitation" TO tempocove_worker;
+GRANT SELECT ON "EventType","Workspace","Membership","BookingRecoveryToken","AccountActionToken","WorkspaceInvitation","BookingAnswer","WorkspaceBranding" TO tempocove_worker;
 GRANT SELECT(id,email,name,"imageUrl","timeZone","emailVerifiedAt","createdAt","updatedAt") ON "User" TO tempocove_worker;
 
 CREATE OR REPLACE FUNCTION tempocove_guard_booking_workspace() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
@@ -1176,15 +1181,30 @@ CREATE POLICY app_workspace_occupancy_insert ON "BookingOccupancy" FOR INSERT TO
 CREATE POLICY app_workspace_booking_recovery_update ON "BookingRecoveryToken" FOR UPDATE TO tempocove_app USING (tempocove_booking_write_child("bookingId","workspaceId",email)) WITH CHECK (tempocove_booking_write_child("bookingId","workspaceId",email));
 CREATE POLICY app_workspace_booking_recovery_insert ON "BookingRecoveryToken" FOR INSERT TO tempocove_app WITH CHECK (tempocove_booking_write_child("bookingId","workspaceId",email));
 CREATE POLICY app_workspace_booking_recovery_read ON "BookingRecoveryToken" FOR SELECT TO tempocove_app USING (tempocove_booking_write_child("bookingId","workspaceId",email));
-CREATE POLICY app_workspace_booking_email_insert ON "EmailOutbox" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_write' AND "bookingId" IS NOT NULL AND tempocove_booking_actor("bookingId") AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL AND EXISTS(SELECT 1 FROM "Booking" b JOIN "User" h ON h.id=b."hostId" WHERE b.id="bookingId" AND b."workspaceId"="EmailOutbox"."workspaceId" AND lower("recipientEmail") IN (lower(b."inviteeEmail"),lower(h.email)) AND ("bookingMutationVersion" IS NULL OR "bookingMutationVersion"=b."mutationVersion")));
+-- The shop mailbox that booking notices are delivered to, which is not the barber's sign-in address.
+-- Read through a definer because enqueueBookingEmail runs under three different contexts -- public
+-- booking creation, an organizer session, and a client's capability link -- and no single Workspace
+-- SELECT policy spans all three. The EmailOutbox insert policies below call it for the same reason:
+-- a policy predicate is evaluated under the caller's own visibility. It returns one configured
+-- address for a workspace the caller has already named, and PUBLIC holds no EXECUTE.
+CREATE OR REPLACE FUNCTION tempocove_workspace_notification_email(p_workspace_id text)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+  SELECT lower(w."notificationEmail") FROM "Workspace" w
+  WHERE w."id"=p_workspace_id AND w."notificationEmail" IS NOT NULL AND w."notificationEmail"<>''
+$fn$;
+ALTER FUNCTION tempocove_workspace_notification_email(text) OWNER TO tempocove_rls_verifier;
+REVOKE ALL ON FUNCTION tempocove_workspace_notification_email(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tempocove_workspace_notification_email(text) TO tempocove_app,tempocove_worker;
+CREATE POLICY app_workspace_booking_email_insert ON "EmailOutbox" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_write' AND "bookingId" IS NOT NULL AND tempocove_booking_actor("bookingId") AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL AND EXISTS(SELECT 1 FROM "Booking" b JOIN "User" h ON h.id=b."hostId" WHERE b.id="bookingId" AND b."workspaceId"="EmailOutbox"."workspaceId" AND (lower("recipientEmail") IN (lower(b."inviteeEmail"),lower(h.email)) OR lower("recipientEmail")=tempocove_workspace_notification_email(b."workspaceId")) AND ("bookingMutationVersion" IS NULL OR "bookingMutationVersion"=b."mutationVersion")));
 CREATE POLICY app_workspace_booking_outbox_insert ON "IntegrationOutbox" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_write' AND tempocove_booking_actor("bookingId") AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL AND EXISTS(SELECT 1 FROM "Booking" b WHERE b.id="bookingId" AND b."workspaceId"="IntegrationOutbox"."workspaceId"));
 CREATE POLICY app_workspace_schedule_write ON "AvailabilitySchedule" FOR ALL TO tempocove_app USING (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write') WITH CHECK (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write');
 CREATE POLICY app_workspace_override_write ON "AvailabilityOverride" FOR ALL TO tempocove_app USING (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write') WITH CHECK (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write');
 
--- Public slug resolution is the only workspace-less tenant read. Once resolved, the server
--- replaces it with a workspace-bound signed context before accessing children or bookings.
+-- Public slug resolution and the '__directory__' sentinel (the post-gate services list; active
+-- rows only, scalars only) are the only workspace-less tenant reads. Once a slug is resolved, the
+-- server replaces it with a workspace-bound signed context before accessing children or bookings.
 CREATE POLICY app_public_event ON "EventType" FOR SELECT TO tempocove_app
-USING (tempocove_context_valid('public') AND "isActive"=true AND split_part(current_setting('tempocove.subject',true),'|',1) IN (id,slug));
+USING (tempocove_context_valid('public') AND "isActive"=true AND split_part(current_setting('tempocove.subject',true),'|',1) IN (id,slug,'__directory__'));
 CREATE POLICY app_public_workspace ON "Workspace" FOR SELECT TO tempocove_app USING (
   tempocove_context_valid('public') AND tempocove_public_event_relation(split_part(current_setting('tempocove.subject',true),'|',1),"Workspace".id,NULL)
 );
@@ -1234,11 +1254,68 @@ END $fn$;
 ALTER FUNCTION tempocove_link_checkout(text,text,text) OWNER TO tempocove_rls_verifier;
 REVOKE ALL ON FUNCTION tempocove_link_checkout(text,text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tempocove_link_checkout(text,text,text) TO tempocove_app;
+-- One live appointment per client. No public policy exposes a Booking row by invitee email, so the
+-- one-booking rule asks this definer function instead: it returns only the id of the caller's own
+-- unfinished appointment and never a readable row, keeping email enumeration off the public surface.
+CREATE OR REPLACE FUNCTION tempocove_active_booking_for_email(p_email text)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+  SELECT b.id FROM "Booking" b
+  WHERE tempocove_context_valid('public') AND current_setting('tempocove.action',true)='booking_create'
+    AND b."workspaceId"=current_setting('tempocove.workspace_id',true)
+    AND lower(b."inviteeEmail")=lower(p_email) AND b.status IN ('CONFIRMED','PENDING_PAYMENT') AND b."endAt">clock_timestamp()
+  ORDER BY b."startAt" LIMIT 1
+$fn$;
+ALTER FUNCTION tempocove_active_booking_for_email(text) OWNER TO tempocove_rls_verifier;
+REVOKE ALL ON FUNCTION tempocove_active_booking_for_email(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tempocove_active_booking_for_email(text) TO tempocove_app;
+-- Public availability is computed from the database, so a confirmed appointment leaves the booking
+-- page immediately instead of waiting for a calendar mirror. No public policy exposes another client's
+-- Booking row, so the slot list asks this definer function for the host's booked time: it returns only
+-- buffered (start, end) ranges for the published event's host and never a readable row, keeping client
+-- names and emails off the public surface. Buffers are validated to at most 240 minutes, so the outer
+-- bounds let the (hostId, startAt, endAt) index prune before the exact buffered overlap is applied.
+CREATE OR REPLACE FUNCTION tempocove_public_host_busy(p_event text,p_from timestamp,p_to timestamp,p_exclude_booking text DEFAULT NULL)
+RETURNS TABLE(busy_start timestamp,busy_end timestamp) LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+  SELECT b."startAt"-b."bufferBeforeMinutes"*interval '1 minute',b."endAt"+b."bufferAfterMinutes"*interval '1 minute'
+  FROM "Booking" b JOIN "EventType" e ON e."workspaceId"=b."workspaceId" AND e."ownerId"=b."hostId"
+  WHERE tempocove_context_valid('public') AND current_setting('tempocove.action',true) IN ('public_read','booking_create')
+    AND e.id=p_event AND e."workspaceId"=current_setting('tempocove.workspace_id',true)
+    AND split_part(current_setting('tempocove.subject',true),'|',1) IN (e.id,e.slug)
+    AND b.status IN ('CONFIRMED','PENDING_PAYMENT')
+    AND b."startAt"<p_to+interval '240 minutes' AND b."endAt">p_from-interval '240 minutes'
+    AND b."startAt"-b."bufferBeforeMinutes"*interval '1 minute'<p_to AND b."endAt"+b."bufferAfterMinutes"*interval '1 minute'>p_from
+    AND (p_exclude_booking IS NULL OR p_exclude_booking='' OR b.id<>p_exclude_booking)
+  ORDER BY 1
+$fn$;
+ALTER FUNCTION tempocove_public_host_busy(text,timestamp,timestamp,text) OWNER TO tempocove_rls_verifier;
+REVOKE ALL ON FUNCTION tempocove_public_host_busy(text,timestamp,timestamp,text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tempocove_public_host_busy(text,timestamp,timestamp,text) TO tempocove_app;
+-- "Manage my appointment" without the emailed link: the client offers a reference or their address and a
+-- fresh link is posted to whatever that resolves to. No policy can express this, because the caller does
+-- not yet know the booking id that every capability policy keys on -- so it is a definer function with the
+-- narrowest possible projection: one id and the address the link will be sent to, never a row.
+--
+-- The subject binding is what stops it being a lookup oracle: the signed context must already name the
+-- same value being asked about, so a caller cannot iterate references or addresses under one context.
+-- Only CONFIRMED bookings that have not finished are eligible; a concluded appointment answers nothing.
+CREATE OR REPLACE FUNCTION tempocove_booking_manage_lookup(p_reference text,p_email text,p_now timestamp)
+RETURNS TABLE(booking_id text,invitee_email text) LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+  SELECT b."id",lower(b."inviteeEmail") FROM "Booking" b
+  WHERE tempocove_context_valid('capability') AND current_setting('tempocove.action',true)='booking_manage_lookup'
+    AND b."status"='CONFIRMED' AND b."endAt">p_now
+    AND ((p_reference<>'' AND b."reference"=p_reference AND current_setting('tempocove.subject',true)=p_reference)
+      OR (p_email<>'' AND lower(b."inviteeEmail")=p_email AND current_setting('tempocove.subject',true)=p_email))
+  ORDER BY b."startAt"
+  LIMIT 1
+$fn$;
+ALTER FUNCTION tempocove_booking_manage_lookup(text,text,timestamp) OWNER TO tempocove_rls_verifier;
+REVOKE ALL ON FUNCTION tempocove_booking_manage_lookup(text,text,timestamp) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tempocove_booking_manage_lookup(text,text,timestamp) TO tempocove_app;
 CREATE POLICY app_public_occupancy_claim ON "BookingOccupancy" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_create' AND tempocove_public_booking_claim("bookingId"));
 CREATE POLICY app_public_occupancy_read ON "BookingOccupancy" FOR SELECT TO tempocove_app USING (tempocove_public_booking_claim("bookingId"));
 CREATE POLICY app_public_outbox_claim ON "IntegrationOutbox" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_create' AND tempocove_public_booking_claim("bookingId") AND "workspaceId"=current_setting('tempocove.workspace_id',true) AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL);
 CREATE POLICY app_public_outbox_read ON "IntegrationOutbox" FOR SELECT TO tempocove_app USING (tempocove_public_booking_claim("bookingId"));
-CREATE POLICY app_public_email_claim ON "EmailOutbox" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_create' AND "bookingId" IS NOT NULL AND tempocove_public_booking_claim("bookingId") AND "workspaceId"=current_setting('tempocove.workspace_id',true) AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL AND EXISTS(SELECT 1 FROM "Booking" b JOIN "User" h ON h.id=b."hostId" WHERE b.id="bookingId" AND lower("recipientEmail") IN (lower(b."inviteeEmail"),lower(h.email)) AND ("bookingMutationVersion" IS NULL OR "bookingMutationVersion"=b."mutationVersion")));
+CREATE POLICY app_public_email_claim ON "EmailOutbox" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_create' AND "bookingId" IS NOT NULL AND tempocove_public_booking_claim("bookingId") AND "workspaceId"=current_setting('tempocove.workspace_id',true) AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL AND EXISTS(SELECT 1 FROM "Booking" b JOIN "User" h ON h.id=b."hostId" WHERE b.id="bookingId" AND (lower("recipientEmail") IN (lower(b."inviteeEmail"),lower(h.email)) OR lower("recipientEmail")=tempocove_workspace_notification_email(b."workspaceId")) AND ("bookingMutationVersion" IS NULL OR "bookingMutationVersion"=b."mutationVersion")));
 CREATE POLICY app_public_email_read ON "EmailOutbox" FOR SELECT TO tempocove_app USING ("bookingId" IS NOT NULL AND tempocove_public_booking_claim("bookingId"));
 CREATE POLICY app_public_recovery_insert ON "BookingRecoveryToken" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_create' AND tempocove_public_booking_claim("bookingId") AND "workspaceId"=current_setting('tempocove.workspace_id',true) AND EXISTS(SELECT 1 FROM "Booking" b WHERE b.id="bookingId" AND lower(b."inviteeEmail")=lower(email)));
 CREATE POLICY app_public_recovery_read ON "BookingRecoveryToken" FOR SELECT TO tempocove_app USING (tempocove_public_booking_claim("bookingId"));
@@ -1360,6 +1437,33 @@ USING (tempocove_context_valid('capability') AND current_setting('tempocove.acti
 WITH CHECK (tempocove_context_valid('capability') AND current_setting('tempocove.action',true) IN ('booking_recovery_request','booking_recovery_consume') AND "bookingId"=current_setting('tempocove.subject',true));
 CREATE POLICY app_capability_recovery_token ON "BookingRecoveryToken" FOR SELECT TO tempocove_app
 USING (tempocove_context_valid('capability') AND current_setting('tempocove.action',true)='booking_recovery_resolve' AND id=current_setting('tempocove.subject',true));
+-- A client cancelling or rescheduling from their own manage session runs in capability mode under
+-- action 'booking_write', which app_capability_recovery above does not cover: it lists only the two
+-- booking_recovery_* actions. enqueueBookingEmail() revokes the booking's live recovery token and
+-- issues its replacement inside that same transaction, and supersedeBookingReminders() retires the
+-- pending reminder, so without these three every client-initiated cancel and reschedule fails. The
+-- INSERT raised a row-level security violation, surfacing as a 500 the client could do nothing with,
+-- and the two UPDATEs are worse for being silent: an UPDATE that matches no row is not an error, so
+-- the superseded manage link stayed live and the client was still reminded to attend an appointment
+-- they had just cancelled. Scope is the signed subject booking, exactly as the occupancy and outbox
+-- capability policies above, and a new token must additionally carry that booking's own workspace and
+-- invitee address, so a capability can only ever reissue the link for the booking it already holds.
+CREATE POLICY app_capability_recovery_write ON "BookingRecoveryToken" FOR INSERT TO tempocove_app WITH CHECK (
+  current_setting('tempocove.action',true)='booking_write' AND tempocove_capability_booking("bookingId")
+  AND EXISTS(SELECT 1 FROM "Booking" b WHERE b.id="BookingRecoveryToken"."bookingId" AND b."workspaceId"="BookingRecoveryToken"."workspaceId" AND lower(b."inviteeEmail")=lower("BookingRecoveryToken".email)));
+CREATE POLICY app_capability_recovery_revoke ON "BookingRecoveryToken" FOR UPDATE TO tempocove_app
+USING (current_setting('tempocove.action',true)='booking_write' AND tempocove_capability_booking("bookingId"))
+WITH CHECK (current_setting('tempocove.action',true)='booking_write' AND tempocove_capability_booking("bookingId"));
+-- Paired with the INSERT above for the same reason app_capability_email_read is paired with
+-- app_capability_email: Prisma writes with a RETURNING clause, and PostgreSQL applies SELECT policies
+-- to the rows an INSERT returns. Without this the write itself passes its WITH CHECK and the statement
+-- still fails with the identical "new row violates row-level security policy" message, which reads like
+-- the INSERT policy is wrong when what is actually missing is the read.
+CREATE POLICY app_capability_recovery_read ON "BookingRecoveryToken" FOR SELECT TO tempocove_app
+USING (current_setting('tempocove.action',true)='booking_write' AND tempocove_capability_booking("bookingId"));
+CREATE POLICY app_capability_email_supersede ON "EmailOutbox" FOR UPDATE TO tempocove_app
+USING (current_setting('tempocove.action',true)='booking_write' AND "bookingId" IS NOT NULL AND tempocove_capability_booking("bookingId"))
+WITH CHECK (current_setting('tempocove.action',true)='booking_write' AND "bookingId" IS NOT NULL AND tempocove_capability_booking("bookingId"));
 CREATE POLICY app_capability_account ON "AccountActionToken" FOR SELECT TO tempocove_app
 USING (tempocove_context_valid('capability') AND current_setting('tempocove.action',true)='account_token_resolve' AND id=current_setting('tempocove.subject',true));
 CREATE POLICY app_invitation_authority ON "WorkspaceInvitation" FOR SELECT TO tempocove_app USING (
@@ -1432,7 +1536,7 @@ CREATE POLICY app_provider_event ON "EventType" FOR SELECT TO tempocove_app USIN
 CREATE POLICY app_provider_host ON "User" FOR SELECT TO tempocove_app USING (tempocove_context_valid('provider') AND tempocove_booking_relation(split_part(current_setting('tempocove.subject',true),'|',1),NULL,NULL,id,NULL));
 CREATE POLICY app_provider_occupancy ON "BookingOccupancy" FOR DELETE TO tempocove_app USING (tempocove_context_valid('provider') AND current_setting('tempocove.action',true)='provider_commit' AND "bookingId"=split_part(current_setting('tempocove.subject',true),'|',1));
 CREATE POLICY app_provider_outbox ON "IntegrationOutbox" FOR INSERT TO tempocove_app WITH CHECK (tempocove_context_valid('provider') AND current_setting('tempocove.action',true)='provider_commit' AND "bookingId"=split_part(current_setting('tempocove.subject',true),'|',1) AND EXISTS(SELECT 1 FROM "Booking" b WHERE b.id="bookingId" AND b."workspaceId"="IntegrationOutbox"."workspaceId") AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL);
-CREATE POLICY app_provider_email ON "EmailOutbox" FOR INSERT TO tempocove_app WITH CHECK (tempocove_context_valid('provider') AND current_setting('tempocove.action',true)='provider_commit' AND "bookingId"=split_part(current_setting('tempocove.subject',true),'|',1) AND EXISTS(SELECT 1 FROM "Booking" b JOIN "User" h ON h.id=b."hostId" WHERE b.id="bookingId" AND b."workspaceId"="EmailOutbox"."workspaceId" AND lower("recipientEmail") IN (lower(b."inviteeEmail"),lower(h.email)) AND ("bookingMutationVersion" IS NULL OR "bookingMutationVersion"=b."mutationVersion")) AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL);
+CREATE POLICY app_provider_email ON "EmailOutbox" FOR INSERT TO tempocove_app WITH CHECK (tempocove_context_valid('provider') AND current_setting('tempocove.action',true)='provider_commit' AND "bookingId"=split_part(current_setting('tempocove.subject',true),'|',1) AND EXISTS(SELECT 1 FROM "Booking" b JOIN "User" h ON h.id=b."hostId" WHERE b.id="bookingId" AND b."workspaceId"="EmailOutbox"."workspaceId" AND (lower("recipientEmail") IN (lower(b."inviteeEmail"),lower(h.email)) OR lower("recipientEmail")=tempocove_workspace_notification_email(b."workspaceId")) AND ("bookingMutationVersion" IS NULL OR "bookingMutationVersion"=b."mutationVersion")) AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL);
 CREATE POLICY app_provider_outbox_read ON "IntegrationOutbox" FOR SELECT TO tempocove_app USING (tempocove_context_valid('provider') AND "bookingId"=split_part(current_setting('tempocove.subject',true),'|',1));
 CREATE POLICY app_provider_email_read ON "EmailOutbox" FOR SELECT TO tempocove_app USING (tempocove_context_valid('provider') AND "bookingId"=split_part(current_setting('tempocove.subject',true),'|',1));
 CREATE POLICY app_provider_recovery_update ON "BookingRecoveryToken" FOR UPDATE TO tempocove_app USING (tempocove_context_valid('provider') AND current_setting('tempocove.action',true)='provider_commit' AND "bookingId"=split_part(current_setting('tempocove.subject',true),'|',1)) WITH CHECK ("bookingId"=split_part(current_setting('tempocove.subject',true),'|',1));
@@ -1440,7 +1544,7 @@ CREATE POLICY app_provider_recovery_insert ON "BookingRecoveryToken" FOR INSERT 
 CREATE POLICY app_provider_recovery_read ON "BookingRecoveryToken" FOR SELECT TO tempocove_app USING (tempocove_context_valid('provider') AND "bookingId"=split_part(current_setting('tempocove.subject',true),'|',1));
 ALTER TABLE "RateLimitBucket" ENABLE ROW LEVEL SECURITY; ALTER TABLE "RateLimitBucket" FORCE ROW LEVEL SECURITY;
 CREATE TABLE tempocove_rate_policy(limit_value integer NOT NULL,window_ms integer NOT NULL,PRIMARY KEY(limit_value,window_ms));
-INSERT INTO tempocove_rate_policy VALUES (3,3600000),(4,3600000),(5,3600000),(8,3600000),(8,900000),(10,3600000),(10,60000),(12,3600000),(12,900000),(20,3600000),(20,900000),(30,3600000),(30,900000),(30,60000),(120,60000),(240,60000);
+INSERT INTO tempocove_rate_policy VALUES (3,3600000),(4,3600000),(5,3600000),(5,300000),(8,3600000),(8,900000),(10,3600000),(10,60000),(12,3600000),(12,900000),(20,3600000),(20,900000),(30,3600000),(30,900000),(30,60000),(120,60000),(200,3600000),(240,60000);
 REVOKE ALL ON tempocove_rate_policy FROM PUBLIC,tempocove_app,tempocove_worker,tempocove_monitor;
 CREATE TABLE tempocove_rate_configuration(singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),max_buckets integer NOT NULL CHECK(max_buckets BETWEEN 1 AND 100000));
 INSERT INTO tempocove_rate_configuration(singleton,max_buckets) VALUES(true,100000);
@@ -1492,7 +1596,7 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY['IntegrationOutbox','EmailOutbox','Booking','OAuthConnection','LocalInboxMessage','WorkerHeartbeat'] LOOP
     EXECUTE format('CREATE POLICY worker_effects ON %I FOR ALL TO tempocove_worker USING (true) WITH CHECK (true)',table_name);
   END LOOP;
-  FOREACH table_name IN ARRAY ARRAY['EventType','User','Workspace','Membership','BookingRecoveryToken','AccountActionToken','WorkspaceInvitation'] LOOP
+  FOREACH table_name IN ARRAY ARRAY['EventType','User','Workspace','Membership','BookingRecoveryToken','AccountActionToken','WorkspaceInvitation','BookingAnswer','WorkspaceBranding'] LOOP
     EXECUTE format('CREATE POLICY worker_reference ON %I FOR SELECT TO tempocove_worker USING (true)',table_name);
   END LOOP;
 END $worker_rls$;

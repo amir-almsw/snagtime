@@ -1,7 +1,7 @@
 "use client";
 
 import { snagTimeApi } from "@/lib/api-client";
-import type { AvailabilityOverride, AvailabilitySchedule, BookingSlot, BookingSummary, CreateEventTypeInput, EventTypeSummary } from "@/lib/contracts";
+import type { AvailabilityOverride, AvailabilitySchedule, BookingSlot, BookingSummary, CreateEventTypeInput, EventTypeSummary, HostBookingInput } from "@/lib/contracts";
 import type { AvailabilityDay, Booking, EventType } from "./demo-data";
 
 export function mapEventType(item: EventTypeSummary): EventType {
@@ -45,8 +45,8 @@ export function toEventInput(event: EventType): CreateEventTypeInput {
     minimumNoticeMinutes: event.minimumNoticeMinutes,
     bookingWindowDays: event.bookingWindowDays,
     priceCents: primary.price ? Math.round(primary.price * 100) : 0,
-    currency: primary.currency ?? "USD",
-    durations: event.durations.map((duration, position) => ({ ...(duration.id ? { id: duration.id } : {}), label: duration.label, durationMinutes: duration.minutes, isDefault: duration.isDefault, priceCents: duration.price ? Math.round(duration.price * 100) : 0, currency: duration.currency ?? "USD", position })),
+    currency: primary.currency ?? "EUR",
+    durations: event.durations.map((duration, position) => ({ ...(duration.id ? { id: duration.id } : {}), label: duration.label, durationMinutes: duration.minutes, isDefault: duration.isDefault, priceCents: duration.price ? Math.round(duration.price * 100) : 0, currency: duration.currency ?? "EUR", position })),
     questions: event.questions.map((question, position) => ({ ...(question.id ? { id: question.id } : {}), label: question.label, kind: question.kind, required: question.required, options: question.options, position })),
   };
 }
@@ -76,7 +76,7 @@ export function mapAvailability(schedule: AvailabilitySchedule): AvailabilityDay
   });
 }
 
-export function toAvailability(days: AvailabilityDay[], timeZone = "America/Chicago"): AvailabilitySchedule {
+export function toAvailability(days: AvailabilityDay[], timeZone = "Europe/Amsterdam"): AvailabilitySchedule {
   return { timeZone, intervals: days.flatMap((day, index) => day.enabled ? day.windows.map((window) => ({ dayOfWeek: index === 6 ? 0 : index + 1, startMinute: timeToMinutes(window.start), endMinute: timeToMinutes(window.end) })) : []) };
 }
 
@@ -90,6 +90,7 @@ export function mapBooking(item: BookingSummary, organizerTimeZone = item.invite
         : item.locationValue || "Custom location";
   return {
     id: item.id,
+    reference: item.reference,
     eventTypeId: item.eventTypeId,
     invitee: item.inviteeName,
     email: item.inviteeEmail,
@@ -114,7 +115,6 @@ export const frontendApi = {
   session: snagTimeApi.session,
   login: snagTimeApi.login,
   logout: snagTimeApi.logout,
-  signup: snagTimeApi.signup,
   requestPasswordReset: snagTimeApi.requestPasswordReset,
   resetPassword: snagTimeApi.resetPassword,
   requestEmailVerification: snagTimeApi.requestEmailVerification,
@@ -123,12 +123,6 @@ export const frontendApi = {
   updateProfileImage: snagTimeApi.updateProfileImage,
   changePassword: snagTimeApi.changePassword,
   completeOnboarding: snagTimeApi.completeOnboarding,
-  switchWorkspace: snagTimeApi.switchWorkspace,
-  listWorkspaceMembers: snagTimeApi.listWorkspaceMembers,
-  updateWorkspaceMember: snagTimeApi.updateWorkspaceMember,
-  listWorkspaceInvitations: snagTimeApi.listWorkspaceInvitations,
-  createWorkspaceInvitation: snagTimeApi.createWorkspaceInvitation,
-  acceptWorkspaceInvitation: snagTimeApi.acceptWorkspaceInvitation,
   async listEventTypes() {
     return (await snagTimeApi.listEventTypes()).map(mapEventType);
   },
@@ -144,6 +138,9 @@ export const frontendApi = {
   async getAvailability() { const schedule = await snagTimeApi.getAvailability(); return { days: mapAvailability(schedule), timeZone: schedule.timeZone, overrides: schedule.overrides ?? [] }; },
   async saveAvailability(days: AvailabilityDay[], timeZone: string, overrides: AvailabilityOverride[]) { const schedule = await snagTimeApi.setAvailability({ ...toAvailability(days, timeZone), overrides }); return { days: mapAvailability(schedule), timeZone: schedule.timeZone, overrides: schedule.overrides ?? [] }; },
   async listBookings(organizerTimeZone?: string) { return (await snagTimeApi.listBookings()).map((item) => mapBooking(item, organizerTimeZone)); },
+  async createHostBooking(input: HostBookingInput, idempotencyKey?: string, organizerTimeZone?: string) { return mapBooking(await snagTimeApi.createHostBooking(input, idempotencyKey), organizerTimeZone); },
+  async getHostSlots(eventTypeId: string, from: string, to: string, timeZone: string, durationId?: string, signal?: AbortSignal): Promise<BookingSlot[]> { return snagTimeApi.getHostSlots(eventTypeId, from, to, timeZone, durationId, signal); },
+  enterClientGate: snagTimeApi.enterClientGate,
   async getPublicEvent(slug: string) { return mapEventType(await snagTimeApi.getPublicEventType(slug)); },
   async getSlots(slug: string, from: string, to: string, timeZone: string, durationId?: string, signal?: AbortSignal): Promise<BookingSlot[]> { return snagTimeApi.getSlots(slug, from, to, timeZone, durationId, signal); },
   createBooking: snagTimeApi.createBooking,
@@ -155,6 +152,7 @@ export const frontendApi = {
   rescheduleBooking: snagTimeApi.rescheduleBooking,
   cancelBooking: snagTimeApi.cancelBooking,
   requestBookingManageLink: snagTimeApi.requestBookingManageLink,
+  requestBookingManageLookup: snagTimeApi.requestBookingManageLookup,
   consumeBookingManageLink: snagTimeApi.consumeBookingManageLink,
   getWorkspaceBranding: snagTimeApi.getWorkspaceBranding,
   updateWorkspaceBranding: snagTimeApi.updateWorkspaceBranding,

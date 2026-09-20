@@ -15,7 +15,7 @@ SnagTime gives you the source code for your own scheduling system. You can run i
 - Weekly availability, date overrides, buffers, minimum notice, and booking windows
 - Public booking links with time-zone handling and custom questions
 - Booking confirmation, rescheduling, cancellation, and recovery links
-- Google Calendar free/busy checks and event creation
+- Database-first availability, with Google Calendar event mirroring and optional free/busy blocks
 - Stripe Checkout in test mode, including webhook confirmation and refund handling
 - SMTP email for organizers and invitees
 - Custom workspace branding, accent colors, profile images, and uploaded logos

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Prisma, type Booking, type EventType } from "@prisma/client";
 import Stripe from "stripe";
-import { enqueueBookingEmail } from "@/server/services/notifications";
+import { enqueueBookingEmail, enqueueBookingReminder } from "@/server/services/notifications";
 import { db } from "@/server/db";
 import { AppError } from "@/server/errors";
 import { enterProviderDatabaseContext } from "@/server/db-context";
@@ -34,7 +34,7 @@ export function assertPaidBookingsConfigured() {
 export class StripeTestPaymentService implements PaymentService {
   private readonly stripe: Stripe;
   constructor(secretKey = process.env.STRIPE_SECRET_KEY, stripeClient?: Stripe) {
-    if (!stripeCredentialSetReady(secretKey, false)) throw new Error("SnagTime only accepts a complete authorized Stripe test-mode credential set.");
+    if (!stripeCredentialSetReady(secretKey, false)) throw new Error("Only a complete authorized Stripe test-mode credential set is accepted.");
     this.stripe = stripeClient ?? new Stripe(secretKey!);
   }
 
@@ -172,6 +172,7 @@ export async function processStripeWebhook(rawBody: string, signature: string) {
           await tx.booking.update({ where: { id: booking.id }, data: { stripePaymentStatus: "paid", stripePaymentIntentId: paymentIntentId, stripeChargeId: chargeId, refundStatus: "NOT_REQUIRED", status: "CONFIRMED", mutationVersion: { increment: 1 }, calendarSyncStatus: "PENDING" } });
           await tx.integrationOutbox.upsert({ where: { idempotencyKey: `calendar:create:${booking.id}:paid` }, update: {}, create: { workspaceId: booking.workspaceId, bookingId: booking.id, kind: "CALENDAR_CREATE", idempotencyKey: `calendar:create:${booking.id}:paid` } });
           await enqueueBookingEmail(tx, { ...booking, stripePaymentStatus: "paid", mutationVersion: booking.mutationVersion + 1 }, "BOOKING_CONFIRMED");
+          await enqueueBookingReminder(tx, { ...booking, stripePaymentStatus: "paid", mutationVersion: booking.mutationVersion + 1 });
           completedBookingId = booking.id;
         } else if (booking.status === "CANCELLED") {
           await tx.booking.update({ where: { id: booking.id }, data: { stripePaymentStatus: "paid_after_cancel", stripePaymentIntentId: paymentIntentId, stripeChargeId: chargeId, refundStatus: booking.refundStatus === "REFUNDED" ? "REFUNDED" : "REFUND_PENDING", refundFailureCode: booking.refundStatus === "REFUNDED" ? booking.refundFailureCode : null } });

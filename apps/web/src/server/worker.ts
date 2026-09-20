@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { db } from "@/server/db";
 import { assertProductionRuntimeSecurity } from "@/server/auth/session";
 import { drainDueOutbox } from "@/server/services/outbox";
@@ -12,6 +13,13 @@ if (!Number.isSafeInteger(intervalMs) || intervalMs < 1_000 || intervalMs > 60_0
 if (!Number.isSafeInteger(shutdownMs) || shutdownMs < 30_000 || shutdownMs > 120_000) throw new Error("Worker shutdown timeout must exceed bounded provider and SMTP calls plus finalization.");
 if (process.env.NODE_ENV === "production") { assertProductionRuntimeSecurity(); assertCompiledBuildIdentity(); if (process.env.OUTBOX_WORKER_MODE !== "dedicated") throw new Error("Production worker requires OUTBOX_WORKER_MODE=dedicated."); }
 
+// Liveness for the container healthcheck. restart:unless-stopped only sees a worker that exited; a
+// worker still running but no longer advancing its poll looks identical to a healthy one from the
+// outside. A settled tick refreshes this file, so staleness is the signal. A failed tick deliberately
+// leaves it alone -- that path already records a DEGRADED heartbeat, which makes the web containers
+// report unready through tempocove_readiness().
+const livenessPath = process.env.WORKER_LIVENESS_PATH || "/tmp/worker-alive";
+function markWorkerAlive() { try { writeFileSync(livenessPath, String(Date.now())); } catch { /* a read-only or absent tmpfs must never fail a drain */ } }
 let stopping = false; let active: Promise<void> | null = null; const controller = new AbortController();let heartbeatChain=Promise.resolve();
 async function assertWorkerDatabaseIdentity(){const identity=await db.$queryRawUnsafe<Array<{role:string;worker:boolean;app:boolean}>>("SELECT current_user AS role,pg_has_role(current_user,'tempocove_worker','member') AS worker,pg_has_role(current_user,'tempocove_app','member') AS app");if(identity[0]?.role!=="tempocove_worker_login"||identity[0].worker!==true||identity[0].app!==false)throw new Error("Production worker requires the exact restricted worker database login.");}
 async function heartbeat(status: string) { heartbeatChain=heartbeatChain.then(async()=>{await db.workerHeartbeat.upsert({ where: { workerId }, update: { lastSeenAt: new Date(), status, buildId }, create: { workerId, lastSeenAt: new Date(), status, buildId } });});await heartbeatChain; }
@@ -23,6 +31,7 @@ async function tick() {
     const email = await processEmailOutbox(undefined, new Date(), undefined, controller.signal);
     const [integrationDead, emailDead] = await Promise.all([db.integrationOutbox.count({ where: { status: "DEAD" } }), db.emailOutbox.count({ where: { status: "DEAD" } })]);
     structuredLog(integrationDead || emailDead ? "warn" : "info", { event: "worker_tick", workerId, attempted: integration.owners + email.attempted, pending: email.pending, dead: integrationDead + emailDead, durationMs: Date.now() - started });
+    markWorkerAlive();
     if(!stopping)await heartbeat("IDLE");
   })().catch(async () => { structuredLog("error", { event: "worker_tick_failed", workerId, code: "WORKER_TICK_FAILED" }); await heartbeat("DEGRADED").catch(() => undefined); }).finally(() => { active = null; });
   await active;

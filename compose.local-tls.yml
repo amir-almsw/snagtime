@@ -1,0 +1,30 @@
+# Local HTTPS ingress overlay for compose.production.yml.
+#
+#   docker compose -f compose.production.yml -f compose.local-tls.yml --env-file test.env up -d
+#
+# The production stack is origin-locked and refuses any non-HTTPS canonical origin, so the web
+# containers cannot be exercised over http://localhost:PORT -- assertSameOrigin() rejects the
+# browser's Origin before any credential is checked and both admin login and the client gate
+# return 401. This overlay puts Caddy in front on the canonical hostnames with a locally issued
+# certificate, which is the same shape as the production ingress.
+services:
+  # Only the deltas from the production caddy service: a locally issued certificate instead of
+  # Let's Encrypt, and its own data volume. Image, command, secrets and the header_up lines are
+  # inherited from compose.production.yml so the two ingresses cannot drift apart.
+  caddy:
+    environment:
+      ACME_EMAIL: local@invalid
+    volumes:
+      - ./infrastructure/caddy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      # Persists the local CA between restarts, so the root you trusted once stays valid.
+      - caddy_local_data:/data
+  # Bound to loopback only, and solely so the one-off operator steps (db:provision:postgres-logins
+  # and db:bootstrap-admin) can reach the database from the host. Production never publishes this.
+  postgres: { ports: ["127.0.0.1:5432:5432"] }
+  # Direct container ports, kept for health probes and `docker compose` debugging only.
+  # Requests sent straight to these ports carry an Origin the app does not accept and will 401;
+  # drive the app through https://$BOOK_HOST and https://$ADMIN_HOST instead.
+  web-book: { ports: ["3100:3000"] }
+  web-admin: { ports: ["3200:3000"] }
+volumes:
+  caddy_local_data: {}

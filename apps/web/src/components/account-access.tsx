@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { SnagTimeApiError } from "@/lib/api-client";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { frontendApi } from "./api-adapter";
 import { claimOneUseLinkAuthority, shareOneUseAction } from "./one-use-link-authority";
 import { BrandMark } from "./ui";
@@ -27,7 +26,7 @@ function GenericRequestForm({ kind }: { kind: "password" | "verification" }) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "The request could not be accepted."); }
     finally { setWorking(false); }
   };
-  if (accepted) return <div className="recovery-result" role="status" aria-live="polite"><strong>Request accepted</strong><p>If the address is eligible, SnagTime will make instructions available through its configured email provider. This page does not confirm an account or delivery.</p><Link className="button button-primary" href="/dashboard">Return to sign in</Link></div>;
+  if (accepted) return <div className="recovery-result" role="status" aria-live="polite"><strong>Request accepted</strong><p>If that address is on file, instructions are on their way. For your privacy, this page doesn’t confirm whether an account exists.</p><Link className="button button-primary" href="/dashboard">Return to sign in</Link></div>;
   return <form onSubmit={submit}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label>{error && <div className="form-error" role="alert" aria-live="assertive">{error}</div>}<button className="button button-primary" type="submit" disabled={working || !email.includes("@")}>{working ? "Submitting…" : kind === "password" ? "Request reset instructions" : "Request verification instructions"}</button></form>;
 }
 
@@ -86,41 +85,4 @@ export function VerifyEmailView() {
   if (status === "idle") return <AccessFrame eyebrow="Email verification" title="Request verification instructions" description="Submit your address. The response does not disclose whether an account exists or requires verification."><GenericRequestForm kind="verification" /><p className="auth-switch"><Link href="/dashboard">Back to sign in</Link></p></AccessFrame>;
   if (status === "verified") return <AccessFrame eyebrow="Email verified" title="Your email is verified" description="You can now sign in to the workspace created for this address."><Link className="button button-primary" href="/dashboard">Sign in</Link></AccessFrame>;
   return <AccessFrame eyebrow="Unable to verify" title="This link cannot be used" description="Verification links are one-time and expire."><div className="form-error" role="alert">{error}</div><Link className="button button-secondary" href="/verify-email">Request another link</Link></AccessFrame>;
-}
-
-export function AcceptInvitationView() {
-  const authority = useRef("");
-  const [status, setStatus] = useState<"working" | "login" | "accepted" | "error">("working");
-  const [error, setError] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const started = useRef(false);
-  const accept = useCallback(async () => {
-    if (!authority.current) return;
-    setStatus("working"); setError("");
-    try { await shareOneUseAction("workspace-invitation", authority.current, () => frontendApi.acceptWorkspaceInvitation(authority.current)); setStatus("accepted"); }
-    catch (reason) {
-      if (reason instanceof SnagTimeApiError && reason.status === 401) { setStatus("login"); return; }
-      setError(reason instanceof Error ? reason.message : "This invitation is invalid or expired."); setStatus("error");
-    }
-  }, []);
-  useEffect(() => {
-    const claim = () => {
-      authority.current = claimOneUseLinkAuthority("token");
-      if (!authority.current) { setError("This invitation link is incomplete."); setStatus("error"); return; }
-      void accept();
-    };
-    if (!started.current) { started.current = true; claim(); }
-    window.addEventListener("hashchange", claim);
-    return () => window.removeEventListener("hashchange", claim);
-  }, [accept]);
-  const login = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setError("");
-    try { await frontendApi.login(email, password); setPassword(""); await accept(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Sign in failed."); setStatus("login"); }
-  };
-  if (status === "working") return <AccessFrame eyebrow="Workspace invitation" title="Checking your invitation" description="The one-time authority has been removed from the browser address."><div className="sync-note" role="status"><span className="spinner" />Checking…</div></AccessFrame>;
-  if (status === "accepted") return <AccessFrame eyebrow="Invitation accepted" title="You’re in" description="This workspace is now available from your account."><Link className="button button-primary" href="/dashboard">Open SnagTime</Link></AccessFrame>;
-  if (status === "login") return <AccessFrame eyebrow="Workspace invitation" title="Sign in to continue" description="Use the verified account matching the invitation. The authority remains only in this page’s memory."><form onSubmit={login}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{error && <div className="form-error" role="alert">{error}</div>}<button className="button button-primary" type="submit">Sign in and accept</button></form></AccessFrame>;
-  return <AccessFrame eyebrow="Unable to accept" title="This invitation cannot be used" description="Invitation links are bound to a verified account, single-use, and expire."><div className="form-error" role="alert">{error}</div><Link className="button button-secondary" href="/dashboard">Go to sign in</Link></AccessFrame>;
 }

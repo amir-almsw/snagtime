@@ -38,6 +38,7 @@
     "ci:postgres-app-context": "tsx --tsconfig apps/web/tsconfig.json scripts/postgres-app-context-check.mts",
     "ci:postgres-service-dml": "tsx --tsconfig apps/web/tsconfig.json scripts/postgres-service-dml-check.mts",
     "db:provision:postgres-logins": "node scripts/provision-postgres-logins.mjs",
+    "db:bootstrap-admin": "node scripts/bootstrap-admin.mjs",
     "db:import:sqlite-postgres": "node scripts/sqlite-to-postgres.mjs",
     "ci:postgres-backup-fixture": "node scripts/postgres-backup-fixture.mjs",
     "ci:postgres-reconcile": "node scripts/postgres-reconcile.mjs",
@@ -69,7 +70,6 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "axe-core": "4.13.0",
     "@types/luxon": "3.7.1",
     "@types/node": "24.10.1",
     "@types/nodemailer": "^7.0.4",
@@ -77,11 +77,12 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@types/smtp-server": "^3.5.12",
+    "axe-core": "4.13.0",
     "cross-env": "10.1.0",
     "dotenv-cli": "11.0.0",
     "esbuild": "0.25.12",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.3.2",
+    "eslint-config-next": "16.3.5",
     "prisma": "6.19.3",
     "smtp-server": "3.19.3",
     "tsx": "4.23.12",
@@ -89,7 +90,7 @@
     "vitest": "4.1.11"
   },
   "dependencies": {
-    "nodemailer": "9.0.5",
+    "nodemailer": "9.1.1",
     "pg": "8.16.3"
   },
   "overrides": {

@@ -14,7 +14,7 @@ export interface EventType {
   bufferAfterMinutes: number; minimumNoticeMinutes: number; bookingCount: number; hostName: string; branding?: WorkspaceBranding | null;
 }
 export interface Booking {
-  id: string; eventTypeId: string; eventSlug?: string; invitee: string; email: string; eventTitle: string; startsAt: string; dateLabel: string;
+  id: string; reference?: string | null; eventTypeId: string; eventSlug?: string; invitee: string; email: string; eventTitle: string; startsAt: string; dateLabel: string;
   timeLabel: string; duration: number; timezone: string; organizerTimeZone: string; status: BookingStatus; hostName: string;
   notificationStatus: "PENDING" | "GOOGLE_UPDATE_ACCEPTED" | "LOCAL_NO_EMAIL" | "RETRY_PENDING"; location?: string;
   answers: BookingAnswer[]; cancellationReason?: string; notes?: string;

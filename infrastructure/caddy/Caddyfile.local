@@ -1,0 +1,70 @@
+# Local HTTPS ingress. This is the production Caddyfile with exactly one thing changed: certificates
+# come from Caddy's own CA instead of Let's Encrypt. Everything else -- the injected proxy secret, the
+# rewritten client address, the response headers -- is byte-for-byte what production serves, so local
+# testing exercises the same ingress behaviour. Keep the two files in step; a header added to one and
+# not the other means the thing you tested is not the thing you shipped.
+#
+# The app is origin-locked: every state-changing route calls assertSameOrigin(), which compares the
+# browser's Origin header against NEXT_PUBLIC_APP_URL and returns 401 on any mismatch. The production
+# contract additionally requires that origin to be HTTPS with path "/", so the stack cannot be reached
+# over http://localhost:PORT at all -- admin login and the client booking gate both reject every
+# request before they look at the password.
+#
+# See docs/DEPLOYMENT.md "Local HTTPS ingress" for the hosts entries and CA trust steps.
+
+{
+	# Issue every certificate from Caddy's own local CA. Without this, a hostname that looks
+	# publicly resolvable (book.example.com) would send Caddy to Let's Encrypt and fail.
+	local_certs
+	# No admin API: nothing local needs to reconfigure this proxy at runtime.
+	admin off
+}
+
+(app_headers) {
+	# clientAddress() in server/rate-limit.ts treats x-tempocove-proxy-secret as proof that a request
+	# arrived through trusted ingress, and only then reads the first x-forwarded-for entry as the
+	# client IP. A client that supplied either one itself would forge its own source address and walk
+	# past the per-IP limits on /api/gate and /api/auth/session.
+	#
+	# `header_up Name value` is what stops that: it SETS the header, replacing any copy the client
+	# sent. Do NOT pair it with a `header_up -Name` delete line -- Caddy applies deletions after sets,
+	# so the delete removes the value just injected and the upstream receives no header at all. That
+	# fails closed rather than open, but it collapses every visitor into the single
+	# "global-untrusted-proxy" bucket, which makes the 12-per-15-minutes admin login limit trivial to
+	# exhaust for everyone at once. Verified against Caddy 2.
+	header_up X-Tempocove-Proxy-Secret {env.PROXY_SHARED_SECRET}
+	header_up X-Forwarded-For {remote_host}
+}
+
+(security_headers) {
+	# Mirrors infrastructure/caddy/Caddyfile. The app itself sets only Referrer-Policy.
+	header {
+		# HSTS is pinned by the browser per host. That is harmless for book.localhost and
+		# admin.localhost, which are only ever served over HTTPS here, and it means the header is
+		# exercised locally rather than appearing for the first time in production.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		# Deliberately no script-src or style-src: app/layout.tsx carries an inline theme bootstrap
+		# script and several components use inline style attributes for operator branding, so a
+		# content policy needs a nonce or hash pass in the app first.
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		# Clipboard-write must stay permitted: the dashboard's copy-booking-link control uses it.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		-Server
+	}
+}
+
+{$BOOK_HOST:book.localhost} {
+	import security_headers
+	reverse_proxy web-book:3000 {
+		import app_headers
+	}
+}
+
+{$ADMIN_HOST:admin.localhost} {
+	import security_headers
+	reverse_proxy web-admin:3000 {
+		import app_headers
+	}
+}

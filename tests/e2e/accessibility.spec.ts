@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { expect, test, type Page } from "@playwright/test";
-import { assertNoClientSecretState, assertNoHorizontalOverflow, attachSession, baseURL, createManagedBooking, db, latestAccountToken, latestInvitationToken, login, organizerEmail, organizerPassword, untracedJson } from "./helpers";
+import { assertNoClientSecretState, assertNoHorizontalOverflow, baseURL, createManagedBooking, createOrganizerAccount, db, latestAccountToken, login, organizerEmail, organizerPassword, passClientGate, untracedJson } from "./helpers";
 
 const require = createRequire(import.meta.url);
 const axePath = require.resolve("axe-core/axe.min.js");
@@ -16,9 +16,11 @@ async function scan(page: Page, state: string) {
 }
 
 test("@axe WCAG 2.2 AA scans auth, public and organizer routes", async ({ page, context }) => {
-  for (const [path, state] of [["/dashboard", "sign-in"], ["/signup", "signup"], ["/forgot-password", "password-request"], ["/verify-email", "verification-request"], ["/book/strategy-call", "public-booking"]] as const) {
+  for (const [path, state] of [["/dashboard", "sign-in"], ["/forgot-password", "password-request"], ["/verify-email", "verification-request"], ["/gate", "client-gate"]] as const) {
     await page.goto(path); await page.getByRole("heading").first().waitFor(); await scan(page, state);
   }
+  await passClientGate(context);
+  await page.goto("/book/strategy-call"); await page.getByRole("heading").first().waitFor(); await scan(page, "public-booking");
   await login(page);
   for (const [path, state] of [["/dashboard", "dashboard"], ["/settings", "settings"], ["/integrations", "integrations"], ["/event-types", "event-types"], ["/event-types/new", "event-editor"], ["/availability", "availability"], ["/bookings", "bookings"]] as const) {
     await page.goto(path); await page.getByRole("heading").first().waitFor(); await scan(page, state);
@@ -67,12 +69,13 @@ test("@axe profile photo upload, reload, removal and fail-closed error", async (
 
 test("@axe scans onboarding, authority outcomes, local inbox, confirmation and manage states", async ({ page, context }, testInfo) => {
   test.setTimeout(180_000);
-  const suffix = `axe-${testInfo.project.name.replaceAll(/[^a-z0-9]/gi, "-").toLowerCase()}`; const email = `${suffix}@example.com`; const password = process.env.PLAYWRIGHT_ACCOUNT_PASSWORD!;
-  await untracedJson("/api/auth/register", { method: "POST", body: JSON.stringify({ name: "Accessible Account", email, password, workspaceName: `Accessible ${suffix}`, timeZone: "America/Chicago" }) });
+  const suffix = `axe-${testInfo.project.name.replaceAll(/[^a-z0-9]/gi, "-").toLowerCase()}`; const password = process.env.PLAYWRIGHT_ACCOUNT_PASSWORD!;
+  const { email } = await createOrganizerAccount(suffix, password, { verified: false });
+  await untracedJson("/api/auth/verify-email/request", { method: "POST", body: JSON.stringify({ email }) });
   const verification = await latestAccountToken(email, "EMAIL_VERIFY");
   await page.goto(`/verify-email#token=${encodeURIComponent(verification)}`); await expect(page).toHaveURL(`${baseURL}/verify-email`); await expect(page.getByRole("heading", { name: "Your email is verified" })).toBeVisible(); await scan(page, "verified-outcome");
   await login(page, email, password); await expect(page).toHaveURL(/\/onboarding$/); await scan(page, "onboarding");
-  await page.getByRole("button", { name: "Open dashboard" }).click(); await expect(page.getByRole("heading", { name: "Scheduling overview" })).toBeVisible();
+  await page.getByRole("button", { name: "Open dashboard" }).click(); await expect(page.getByRole("heading", { name: "Studio overview" })).toBeVisible();
   await page.goto("/forgot-password"); await page.getByLabel("Email address").fill(email); await page.getByRole("button", { name: "Request reset instructions" }).click(); await expect(page.getByRole("status")).toContainText("Request accepted"); const reset = await latestAccountToken(email, "PASSWORD_RESET");
   await page.goto(`/reset-password#token=${encodeURIComponent(reset)}`); await expect(page).toHaveURL(`${baseURL}/reset-password`); await expect(page.getByRole("heading", { name: "Choose a new password" })).toBeVisible(); await scan(page, "reset-token-form");
 
@@ -81,10 +84,6 @@ test("@axe scans onboarding, authority outcomes, local inbox, confirmation and m
   await page.goto(`/book/strategy-call/confirmation?booking=${encodeURIComponent(managed.id)}`); await expect(page.getByRole("heading", { name: /You’re booked/ })).toBeVisible(); await scan(page, "booking-confirmation");
   await page.goto(`/manage/${managed.id}/reschedule?slug=strategy-call`); await expect(page.getByRole("heading", { name: "Choose a new time" })).toBeVisible({ timeout: 60_000 }); await scan(page, "manage-reschedule");
   await page.goto(`/manage/${managed.id}/cancel?slug=strategy-call`); await expect(page.getByRole("heading", { name: /Cancel/ })).toBeVisible(); await scan(page, "manage-cancel");
-
-  await page.goto("/settings"); await page.getByLabel("Invitee email").fill(email); await page.getByLabel("Workspace role").selectOption("MEMBER"); await page.getByRole("button", { name: "Send invitation" }).click();
-  const invitation = await latestInvitationToken(email); await context.clearCookies(); await attachSession(context, email, password);
-  await page.goto(`/invite/accept#token=${encodeURIComponent(invitation)}`); await expect(page).toHaveURL(`${baseURL}/invite/accept`); await expect(page.getByRole("heading", { name: "You’re in" })).toBeVisible(); await scan(page, "invitation-accepted");
 
   await context.clearCookies(); await login(page, organizerEmail, organizerPassword); await page.request.post("/api/integrations/email/inbox"); await page.goto("/integrations"); await expect(page.getByRole("heading", { name: "Demo inbox" })).toBeVisible(); await scan(page, "local-inbox");
   await assertNoClientSecretState(context, page);
@@ -112,6 +111,10 @@ test("@axe keyboard focus, modal trap, Escape return and mobile navigation", asy
   const bookingLabel = `keyboard-${test.info().project.name}`;
   await createManagedBooking(context, bookingLabel);
   await page.goto("/bookings");
+  await expect(page.getByRole("region", { name: "Bookings calendar" })).toBeVisible();
+  const listToggle = page.getByRole("button", { name: "List", exact: true });
+  await listToggle.focus(); await page.keyboard.press("Enter");
+  await expect(listToggle).toHaveAttribute("aria-pressed", "true");
   const row = page.locator(".booking-table-row").filter({ has: page.getByText(`Invitee ${bookingLabel}`, { exact: true }) });
   await expect(row).toHaveCount(1);
   await row.focus(); await page.keyboard.press("Enter");

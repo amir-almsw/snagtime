@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { AppError } from "@/server/errors";
 import { hashPassword } from "@/server/auth/password";
 import { actionTokenHash, actionTokenId, bookingTokenBinding, createActionToken, tokenHashMatches } from "@/server/services/notifications";
+import { normalizeBookingReference } from "@/server/services/booking-reference";
 import { enterCapabilityDatabaseContext } from "@/server/db-context";
 
 const COMPARABLE_RECOVERY_PASSWORD = "Comparable!BookingRecovery9";
@@ -29,6 +30,40 @@ export async function requestBookingManageLink(bookingId: string, emailInput: st
       SELECT ${outboxId},r."workspaceId",r."bookingId",'BOOKING_RECOVERY',r."email",${subject},${payloadJson},${idempotencyKey},${now},${now},${now}
       FROM "BookingRecoveryToken" r WHERE r."id"=${tokenId} AND r."tokenHash"=${authority.tokenHash}`; observeWork("OUTBOX_INSERT");
   });
+  return { accepted: true as const };
+}
+
+// Resolves what the client typed to a booking they may manage. Production reads through the definer
+// function because no public policy exposes a Booking the caller cannot already name; SQLite has no RLS
+// and reads the row. Either way the projection is one id and one address, never a booking row.
+async function resolveManageableBooking(reference: string, email: string, now: Date) {
+  if (!reference && !email) return null;
+  if (process.env.DATABASE_PROVIDER === "postgresql" && process.env.NODE_ENV === "production") {
+    enterCapabilityDatabaseContext(reference || email, undefined, undefined, "booking_manage_lookup");
+    const rows = await db.$queryRawUnsafe<Array<{ booking_id: string; invitee_email: string }>>(
+      "SELECT booking_id,invitee_email FROM tempocove_booking_manage_lookup($1::text,$2::text,$3::timestamp)",
+      reference, email, now.toISOString());
+    return rows[0] ? { bookingId: rows[0].booking_id, inviteeEmail: rows[0].invitee_email } : null;
+  }
+  const rows = await db.$queryRaw<Array<{ id: string; inviteeEmail: string }>>`
+    SELECT "id","inviteeEmail" FROM "Booking"
+    WHERE "status"='CONFIRMED' AND "endAt" > ${now}
+      AND ((${reference} <> '' AND "reference" = ${reference}) OR (${email} <> '' AND lower("inviteeEmail") = ${email}))
+    ORDER BY "startAt" ASC LIMIT 1`;
+  return rows[0] ? { bookingId: rows[0].id, inviteeEmail: rows[0].inviteeEmail.toLowerCase() } : null;
+}
+
+// The entry point behind "I don't have my link". The answer is always the same sentence whether the
+// lookup matched, matched nothing, or matched an appointment that has already happened -- so it can
+// never be used to discover whether an address or a code belongs to anyone.
+export async function requestBookingManageLinkByLookup(input: { reference?: string; email?: string }, now = new Date()) {
+  const reference = input.reference ? normalizeBookingReference(input.reference) : "";
+  const email = (input.email || "").trim().toLowerCase();
+  const match = await resolveManageableBooking(reference, email, now);
+  // A miss still runs the whole request path. requestBookingManageLink is built out of INSERT...SELECT
+  // guarded on the booking existing, so an id that matches nothing writes nothing -- and the scrypt work
+  // it does first is what keeps a hit and a miss indistinguishable from outside.
+  await requestBookingManageLink(match?.bookingId ?? `no-match-${randomBytes(9).toString("base64url")}`, match?.inviteeEmail ?? "no-match@invalid", now);
   return { accepted: true as const };
 }
 

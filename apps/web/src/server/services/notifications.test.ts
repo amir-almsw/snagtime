@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SMTPServer } from "smtp-server";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
 import { createSessionForUser, type WorkspaceAccess } from "@/server/auth/session";
 import { verifyPassword } from "@/server/auth/password";
@@ -116,7 +116,7 @@ describe("transactional email and recovery authority", () => {
     await db.$transaction((tx) => enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED")); booking = await db.booking.update({ where: { id: booking.id }, data: { mutationVersion: 1, startAt: new Date("2099-01-02T10:00:00Z"), endAt: new Date("2099-01-02T10:30:00Z") } }); await db.$transaction((tx) => enqueueBookingEmail(tx, booking, "BOOKING_RESCHEDULED"));
     await db.emailOutbox.updateMany({ where: { bookingId: booking.id, bookingMutationVersion: 1 }, data: { status: "PROCESSING", leaseToken: "dead", leaseExpiresAt: new Date("2020-01-01Z") } });
     const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider); await processEmailOutbox(owner.workspace.id, new Date(), provider);
-    expect(provider.messages).toHaveLength(2); expect(provider.messages.every((message) => message.text.includes("rescheduled"))).toBe(true); expect(await db.emailOutbox.count({ where: { bookingId: booking.id, status: "SUPERSEDED" } })).toBe(2); expect(await db.emailOutbox.count({ where: { bookingId: booking.id, status: "COMPLETED" } })).toBe(2);
+    expect(provider.messages).toHaveLength(2); expect(provider.messages.every((message) => message.text.includes("moved"))).toBe(true); expect(await db.emailOutbox.count({ where: { bookingId: booking.id, status: "SUPERSEDED" } })).toBe(2); expect(await db.emailOutbox.count({ where: { bookingId: booking.id, status: "COMPLETED" } })).toBe(2);
   });
 
   it("notifies the calendar owner without exposing invitee booking authority", async () => {
@@ -126,7 +126,7 @@ describe("transactional email and recovery authority", () => {
     expect(await db.emailOutbox.count({ where: { bookingId: booking.id } })).toBe(2);
     const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider);
     const invitee = provider.messages.find((message) => message.recipientEmail === booking.inviteeEmail)!; const organizer = provider.messages.find((message) => message.recipientEmail === owner.user.email)!;
-    expect(invitee.text).toContain(`/manage/${booking.id}/reschedule#recovery=`); expect(invitee.text).not.toContain(`/manage/${booking.id}/reschedule?recovery=`); expect(invitee.replyTo).toBe("support@example.invalid"); expect(organizer.subject).toBe("New booking: Owner event"); expect(organizer.replyTo).toBe("taylor@example.com"); expect(organizer.text).toContain("Taylor Guest (taylor@example.com) confirmed Owner event"); expect(organizer.text).toContain(`/bookings?selected=${booking.id}`); expect(organizer.text).not.toContain("recovery=");
+    expect(invitee.text).toContain(`/manage/${booking.id}/reschedule#recovery=`); expect(invitee.text).not.toContain(`/manage/${booking.id}/reschedule?recovery=`); expect(invitee.replyTo).toBe("support@example.invalid"); expect(organizer.subject).toBe("New appointment: Owner event"); expect(organizer.replyTo).toBe("taylor@example.com"); expect(organizer.text).toContain("Taylor Guest (taylor@example.com) booked Owner event"); expect(organizer.text).toContain(`/bookings?selected=${booking.id}`); expect(organizer.text).not.toContain("recovery=");
   });
 
   it("queues distinct invitee and organizer notices when both use the same address", async () => {
@@ -136,8 +136,8 @@ describe("transactional email and recovery authority", () => {
     expect(await db.emailOutbox.count({ where: { bookingId: booking.id } })).toBe(2);
     const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider);
     expect(provider.messages).toHaveLength(2); expect(new Set(provider.messages.map((message) => message.subject)).size).toBe(2);
-    expect(provider.messages.find((message) => message.subject.startsWith("New booking:"))?.replyTo).toBe(owner.user.email);
-    expect(provider.messages.find((message) => !message.subject.startsWith("New booking:"))?.replyTo).toBe("support@example.invalid");
+    expect(provider.messages.find((message) => message.subject.startsWith("New appointment:"))?.replyTo).toBe(owner.user.email);
+    expect(provider.messages.find((message) => !message.subject.startsWith("New appointment:"))?.replyTo).toBe("support@example.invalid");
   });
 
   it("encrypts the bounded local inbox and disables it outside explicit demo mode", async () => {
@@ -152,6 +152,34 @@ describe("transactional email and recovery authority", () => {
     delete process.env.DEMO_MODE; await expect(listLocalInbox(owner.workspace.id)).rejects.toThrow("LOCAL_INBOX_DISABLED"); delete process.env.EMAIL_PROVIDER;
   });
 
+  it("sends studio notices to the workspace mailbox when one is set, leaving the sign-in address alone", async () => {
+    const owner = await fixture("studio-mailbox"); const event = await db.eventType.create({ data: { workspaceId: owner.workspace.id, ownerId: owner.user.id, name: "Studio event", slug: `studio-${randomUUID()}`, locationType: "CUSTOM" } });
+    await db.workspace.update({ where: { id: owner.workspace.id }, data: { notificationEmail: "support@dvision.test" } });
+    const booking = await db.booking.create({ data: { workspaceId: owner.workspace.id, eventTypeId: event.id, hostId: owner.user.id, durationMinutes: 30, inviteeName: "Mailbox Probe", inviteeEmail: "mailbox-probe@example.invalid", inviteeTimeZone: "UTC", startAt: new Date("2099-08-01T10:00:00Z"), endAt: new Date("2099-08-01T10:30:00Z"), eventTitleSnapshot: "Studio event", capabilityVersion: randomUUID(), manageExpiresAt: new Date("2099-09-01T00:00:00Z") } });
+    try {
+      await db.$transaction((tx) => enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED"));
+      const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider);
+      const studio = provider.messages.find((message) => message.subject.startsWith("New appointment:"))!;
+      expect(studio.recipientEmail).toBe("support@dvision.test");
+      expect(studio.recipientEmail).not.toBe(owner.user.email);
+      // Replying still reaches the client rather than the shop mailbox.
+      expect(studio.replyTo).toBe("mailbox-probe@example.invalid");
+      // And the client's own copy is untouched by any of this.
+      expect(provider.messages.some((message) => message.recipientEmail === "mailbox-probe@example.invalid")).toBe(true);
+    } finally { await db.booking.delete({ where: { id: booking.id } }); }
+  });
+
+  it("falls back to the sign-in address when the workspace mailbox cannot be read, rather than dropping the notice", async () => {
+    const owner = await fixture("studio-mailbox-denied"); const event = await db.eventType.create({ data: { workspaceId: owner.workspace.id, ownerId: owner.user.id, name: "Denied event", slug: `denied-${randomUUID()}`, locationType: "CUSTOM" } });
+    const booking = await db.booking.create({ data: { workspaceId: owner.workspace.id, eventTypeId: event.id, hostId: owner.user.id, durationMinutes: 30, inviteeName: "Denied Probe", inviteeEmail: "denied-probe@example.invalid", inviteeTimeZone: "UTC", startAt: new Date("2099-08-02T10:00:00Z"), endAt: new Date("2099-08-02T10:30:00Z"), eventTitleSnapshot: "Denied event", capabilityVersion: randomUUID(), manageExpiresAt: new Date("2099-09-01T00:00:00Z") } });
+    const spy = vi.spyOn(db.workspace, "findUnique").mockRejectedValue(Object.assign(new Error("permission denied"), { meta: { code: "42501" } }));
+    try {
+      await db.$transaction((tx) => enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED"));
+      const provider = new CaptureProvider(); await processEmailOutbox(owner.workspace.id, new Date(), provider);
+      expect(provider.messages.find((message) => message.subject.startsWith("New appointment:"))!.recipientEmail).toBe(owner.user.email.toLowerCase());
+    } finally { spy.mockRestore(); await db.booking.delete({ where: { id: booking.id } }); }
+  });
+
   it("delivers through bounded STARTTLS SMTP with a deterministic message identity", async () => {
     let received = "";
     const server = new SMTPServer({ secure: false, authOptional: true, onAuth(auth, _session, callback) { callback(null, { user: auth.username }); }, onData(stream, _session, callback) { stream.on("data", (chunk) => { received += chunk.toString("utf8"); }); stream.on("end", () => callback()); } });
@@ -159,9 +187,12 @@ describe("transactional email and recovery authority", () => {
     try {
       const address = server.server.address(); if (!address || typeof address === "string") throw new Error("SMTP test listener missing");
       process.env.SMTP_HOST = "127.0.0.1"; process.env.SMTP_PORT = String(address.port); process.env.SMTP_USER = "test"; process.env.SMTP_PASSWORD = "test"; process.env.EMAIL_FROM = "SnagTime <notifications@example.invalid>"; process.env.EMAIL_REPLY_TO = "support@example.invalid"; process.env.EMAIL_SENDER_DOMAIN = "example.invalid"; process.env.SMTP_TLS_MODE = "starttls"; process.env.SMTP_ALLOW_SELF_SIGNED = "true";
-      const provider = new SmtpEmailProvider(); const delivery = { workspaceId: "smtp-workspace", outboxId: "smtp-outbox", idempotencyKey: "smtp-idempotency", recipientEmail: "recipient@example.invalid", replyTo: "invitee@example.net", subject: "SMTP proof", text: "bounded TLS delivery" };
+      const provider = new SmtpEmailProvider(); const delivery = { workspaceId: "smtp-workspace", outboxId: "smtp-outbox", idempotencyKey: "smtp-idempotency", recipientEmail: "recipient@example.invalid", replyTo: "invitee@example.net", subject: "SMTP proof", text: "bounded TLS delivery", html: "<p>bounded TLS delivery</p>" };
       await provider.send(delivery);
-      expect(received).toContain("bounded TLS delivery"); expect(received).toMatch(/From: SnagTime <notifications@example\.invalid>/i); expect(received).toMatch(/Reply-To: invitee@example\.net/i); expect(received).toMatch(/X-SnagTime-Dedupe:/i); expect(received).toMatch(/Message-ID:\s*\r?\n?\s*<[0-9a-f]{64}@snagtime\.invalid>/i);
+      expect(received).toContain("bounded TLS delivery"); expect(received).toMatch(/From: SnagTime <notifications@example\.invalid>/i); expect(received).toMatch(/Reply-To: invitee@example\.net/i); expect(received).toMatch(/X-SnagTime-Dedupe:/i);
+      // The Message-ID domain has to resolve. A reserved TLD costs reputation with some filters.
+      expect(received).toMatch(/Message-ID:\s*\r?\n?\s*<[0-9a-f]{64}@example\.invalid>/i);
+      expect(received).toMatch(/Content-Type: multipart\/alternative/i); expect(received).toContain("<p>bounded TLS delivery</p>");
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
 

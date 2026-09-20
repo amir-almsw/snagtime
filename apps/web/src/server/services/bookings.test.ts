@@ -79,16 +79,16 @@ describe("paid booking cancellation recovery", () => {
     const event = await db.eventType.findFirstOrThrow({ include: { durations: true } }); const duration = event.durations[0]!; const bookingId = randomUUID();
     await db.booking.create({ data: {
       id: bookingId, workspaceId: event.workspaceId, eventTypeId: event.id, hostId: event.ownerId, durationId: duration.id, durationMinutes: duration.durationMinutes,
-      inviteeName: "CAS Race", inviteeEmail: "cas-race@example.com", inviteeTimeZone: "America/Chicago", startAt: new Date("2099-08-25T15:00:00Z"), endAt: new Date("2099-08-25T15:30:00Z"), status: "CONFIRMED", bookingWindowDays: 30000,
+      inviteeName: "CAS Race", inviteeEmail: "cas-race@example.com", inviteeTimeZone: "America/Chicago", startAt: new Date("2099-08-25T09:00:00Z"), endAt: new Date("2099-08-25T09:30:00Z"), status: "CONFIRMED", bookingWindowDays: 30000,
       idempotencyKey: randomUUID(), requestFingerprint: randomUUID(), capabilityVersion: randomUUID(), manageExpiresAt: new Date("2099-09-25T00:00:00Z"),
-      occupancies: { create: { workspaceId: event.workspaceId, hostId: event.ownerId, minuteStart: new Date("2099-08-25T15:00:00Z") } },
+      occupancies: { create: { workspaceId: event.workspaceId, hostId: event.ownerId, minuteStart: new Date("2099-08-25T09:00:00Z") } },
     } });
     let canceled = false;
     const calendar: CalendarService = {
       async getBusyIntervals() { if (!canceled) { canceled = true; await cancelBooking(bookingId, "Concurrent cancellation"); } return []; },
       async createBookingEvent() { return null; }, async updateBookingEvent() {}, async deleteBookingEvent() {},
     };
-    await expect(rescheduleBooking(bookingId, "2099-08-24T15:00:00.000Z", calendar)).rejects.toThrow(/changed while rescheduling/);
+    await expect(rescheduleBooking(bookingId, "2099-08-24T09:00:00.000Z", calendar)).rejects.toThrow(/changed while rescheduling/);
     expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ status: "CANCELLED", mutationVersion: 1 });
     expect(await db.bookingOccupancy.count({ where: { bookingId } })).toBe(0);
     await db.booking.delete({ where: { id: bookingId } });
@@ -96,10 +96,10 @@ describe("paid booking cancellation recovery", () => {
 
   it("lists manage-authorized reschedule slots without blocking on the current booking", async () => {
     const event = await db.eventType.findFirstOrThrow({ include: { durations: true } }); const duration = event.durations[0]!; const bookingId = randomUUID();
-    const startAt = new Date("2099-08-25T15:00:00Z");
+    const startAt = new Date("2099-08-25T09:00:00Z");
     await db.booking.create({ data: {
       id: bookingId, workspaceId: event.workspaceId, eventTypeId: event.id, hostId: event.ownerId, durationId: duration.id, durationMinutes: duration.durationMinutes,
-      inviteeName: "Manage Slots", inviteeEmail: "manage-slots@example.com", inviteeTimeZone: "America/Chicago", startAt, endAt: new Date("2099-08-25T15:30:00Z"), status: "CONFIRMED",
+      inviteeName: "Manage Slots", inviteeEmail: "manage-slots@example.com", inviteeTimeZone: "America/Chicago", startAt, endAt: new Date("2099-08-25T09:30:00Z"), status: "CONFIRMED",
       idempotencyKey: randomUUID(), requestFingerprint: randomUUID(), capabilityVersion: randomUUID(), manageExpiresAt: new Date("2099-09-25T00:00:00Z"), calendarProviderSnapshot: "google", bookingWindowDays: 30000,
       occupancies: { create: { workspaceId: event.workspaceId, hostId: event.ownerId, minuteStart: startAt } },
     } });
@@ -143,18 +143,18 @@ describe("paid booking cancellation recovery", () => {
     const event = await db.eventType.findFirstOrThrow({ include: { durations: true } }); const duration = event.durations[0]!; const bookingId = randomUUID(); const sessionToken = randomUUID();
     await db.booking.create({ data: {
       id: bookingId, workspaceId: event.workspaceId, eventTypeId: event.id, hostId: event.ownerId, durationId: duration.id, durationMinutes: duration.durationMinutes,
-      inviteeName: "Successive Reschedule", inviteeEmail: "successive@example.com", inviteeTimeZone: "America/Chicago", startAt: new Date("2099-08-25T15:00:00Z"), endAt: new Date("2099-08-25T15:30:00Z"), status: "CONFIRMED", bookingWindowDays: 30000,
+      inviteeName: "Successive Reschedule", inviteeEmail: "successive@example.com", inviteeTimeZone: "America/Chicago", startAt: new Date("2099-08-25T09:00:00Z"), endAt: new Date("2099-08-25T09:30:00Z"), status: "CONFIRMED", bookingWindowDays: 30000,
       idempotencyKey: randomUUID(), requestFingerprint: randomUUID(), capabilityVersion: randomUUID(), manageExpiresAt: new Date("2099-09-25T00:00:00Z"),
-      occupancies: { create: { workspaceId: event.workspaceId, hostId: event.ownerId, minuteStart: new Date("2099-08-25T15:00:00Z") } },
+      occupancies: { create: { workspaceId: event.workspaceId, hostId: event.ownerId, minuteStart: new Date("2099-08-25T09:00:00Z") } },
       manageSessions: { create: { tokenHash: createHash("sha256").update(sessionToken).digest("hex"), scopes: "read,cancel,reschedule", expiresAt: new Date("2099-09-25T00:00:00Z"), acknowledgedAt: new Date("2099-08-21T00:00:00Z") } },
     } });
     const call = (startAt: string) => patchBooking(new Request(`http://localhost:3000/api/bookings/${bookingId}`, { method: "PATCH", headers: { origin: "http://localhost:3000", cookie: `${manageCookieName(bookingId)}=${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify({ startAt }) }), { params: Promise.resolve({ id: bookingId }) });
     expect((await getManageSlots(new Request(`http://localhost:3000/api/bookings/${bookingId}/slots?from=2099-08-24T00:00:00Z&to=2099-08-25T00:00:00Z&timeZone=Not/AZone`, { headers: { cookie: `${manageCookieName(bookingId)}=${sessionToken}` } }), { params: Promise.resolve({ id: bookingId }) })).status).toBe(400);
     for (let index = 0; index < 35; index += 1) expect((await getBooking(new Request(`http://localhost:3000/api/bookings/${bookingId}`, { headers: { cookie: `${manageCookieName(bookingId)}=${sessionToken}` } }), { params: Promise.resolve({ id: bookingId }) })).status).toBe(200);
-    expect((await call("2099-08-24T15:00:00.000Z")).status).toBe(200);
-    expect((await call("2099-08-26T15:00:00.000Z")).status).toBe(200);
-    expect((await call("2099-08-26T15:00:00.000Z")).status).toBe(200);
-    expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ startAt: new Date("2099-08-26T15:00:00.000Z"), mutationVersion: 2 });
+    expect((await call("2099-08-24T09:00:00.000Z")).status).toBe(200);
+    expect((await call("2099-08-26T09:00:00.000Z")).status).toBe(200);
+    expect((await call("2099-08-26T09:00:00.000Z")).status).toBe(200);
+    expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ startAt: new Date("2099-08-26T09:00:00.000Z"), mutationVersion: 2 });
     expect(await db.integrationOutbox.count({ where: { bookingId, kind: "CALENDAR_UPDATE" } })).toBe(2);
     expect((await deleteBooking(new Request(`http://localhost:3000/api/bookings/${bookingId}`, { method: "DELETE", headers: { origin: "http://localhost:3000", cookie: `${manageCookieName(bookingId)}=${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify({ reason: "Completed flow" }) }), { params: Promise.resolve({ id: bookingId }) })).status).toBe(200);
     await db.booking.delete({ where: { id: bookingId } });

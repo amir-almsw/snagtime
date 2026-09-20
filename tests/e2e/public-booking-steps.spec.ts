@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { assertNoHorizontalOverflow } from "./helpers";
+import { assertNoHorizontalOverflow, passClientGate } from "./helpers";
 
-test("@booking-steps invitee progress validates forward navigation and remains keyboard operable", async ({ page }) => {
+test("@booking-steps invitee progress validates forward navigation and remains keyboard operable", async ({ page, context }) => {
   let publicEventRequestCount = 0;
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/public/strategy-call") publicEventRequestCount += 1;
   });
+  await passClientGate(context);
   await page.goto("/book/strategy-call");
   const firstTime = page.locator(".time-grid button").first();
   await expect(firstTime).toBeVisible();

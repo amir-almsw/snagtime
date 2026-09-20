@@ -17,16 +17,16 @@ async function main() {
   const password = process.env.DEMO_HOST_PASSWORD;
   if (!password) throw new Error("DEMO_HOST_PASSWORD is required for the demo seed.");
   const passwordHash = await seedPasswordHash(password);
-  const email = (process.env.DEMO_HOST_EMAIL || "nate@example.com").toLowerCase();
+  const email = (process.env.DEMO_HOST_EMAIL || "barber@example.com").toLowerCase();
   const host = await prisma.user.upsert({
     where: { email },
     update: { passwordHash, emailVerifiedAt: new Date() },
-    create: { email, name: "Nate Herk", timeZone: "America/Chicago", passwordHash, emailVerifiedAt: new Date() },
+    create: { email, name: "Dominic Vision", timeZone: "Europe/Amsterdam", passwordHash, emailVerifiedAt: new Date() },
   });
   const workspace = await prisma.workspace.upsert({
     where: { id: `ws_${host.id}` },
     update: {},
-    create: { id: `ws_${host.id}`, name: "Uppity AI", timeZone: host.timeZone, onboardingCompletedAt: new Date() },
+    create: { id: `ws_${host.id}`, name: "Dvision Studio", timeZone: host.timeZone, onboardingCompletedAt: new Date() },
   });
   await prisma.membership.upsert({
     where: { workspaceId_userId: { workspaceId: workspace.id, userId: host.id } },
@@ -55,9 +55,9 @@ async function main() {
       slug: "strategy-call",
       description: "A focused conversation about your next best move.",
       durationMinutes: 30,
-      color: "#2563EB",
+      color: "#C11427",
       locationType: "CUSTOM",
-      locationValue: "Organizer will share meeting details",
+      locationValue: "At the studio",
     },
   });
   if (!await prisma.eventDuration.count({ where: { eventTypeId: eventType.id } })) {
@@ -87,7 +87,7 @@ async function main() {
       slug: "paid-strategy-session",
       description: "A focused working session for solo experts building a more reliable offer and booking flow.",
       durationMinutes: 60,
-      color: "#2563EB",
+      color: "#C11427",
       locationType: "GOOGLE_MEET",
       minimumNoticeMinutes: 120,
       bookingWindowDays: 30,
@@ -108,7 +108,7 @@ async function main() {
   await prisma.workspaceBranding.upsert({
     where: { workspaceId: workspace.id },
     update: {},
-    create: { workspaceId: workspace.id, userId: host.id, workspaceName: "Uppity AI", accentColor: "#2563EB", description: "Book a focused conversation with Nate." },
+    create: { workspaceId: workspace.id, userId: host.id, workspaceName: "Dvision Studio", accentColor: "#C11427", description: "Precision cuts, grooming, and styling by appointment." },
   });
 }
 

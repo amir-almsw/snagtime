@@ -10,6 +10,10 @@ const workerBookingInclude = { eventType: true, host: { select: { id: true, name
 
 function assertWorkerRunning(signal?: AbortSignal) { if (signal?.aborted) throw new Error("OUTBOX_WORKER_STOPPING"); }
 
+// Google's invite used to supersede the studio's own client email so exactly one message went out.
+// It no longer does: the invite is a calendar artefact with no booking reference, no manage link and
+// no branding, so the studio's copy is always sent and Google's rides alongside it.
+
 export async function withProviderDeadline<T>(operation: Promise<T>, timeoutMs = CALENDAR_PROVIDER_TIMEOUT_MS) {
   let timer: NodeJS.Timeout | undefined;
   try {

@@ -291,11 +291,15 @@ describe("calendar outbox ownership and lease recovery", () => {
     ] });
     process.env.GOOGLE_CLIENT_ID = "test-client"; process.env.GOOGLE_CLIENT_SECRET = "test-secret"; process.env.GOOGLE_REFRESH_TOKEN = "test-refresh"; process.env.DEMO_MODE = "true"; process.env.GOOGLE_ENV_WORKSPACE_ID = event.workspaceId;
     const calendar: CalendarService = { async getBusyIntervals() { return []; }, async createBookingEvent() { throw new Error("create must stay blocked"); }, async updateBookingEvent() { throw new Error("update must stay blocked"); }, async deleteBookingEvent(booking) { expect(booking.externalCalendarEventId).toBe(deterministicId); return { eventId: deterministicId, providerAbsent: true }; } };
-    await processOutbox(event.workspaceId, bookingId, new Date(), calendar);
-    expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ externalCalendarEventId: deterministicId, notificationStatus: "RETRY_PENDING" });
-    expect(await db.integrationOutbox.findUniqueOrThrow({ where: { idempotencyKey: `calendar:delete:${bookingId}:absent` } })).toMatchObject({ status: "RETRY", lastErrorCode: "PROVIDER_OPERATION_FAILED" });
-    expect(await db.integrationOutbox.findUniqueOrThrow({ where: { idempotencyKey: `calendar:create:${bookingId}:absent` } })).toMatchObject({ status: "RETRY", lastErrorCode: null });
-    await db.booking.delete({ where: { id: bookingId } });
+    // try/finally for the same reason the next test spells out: a trailing delete is skipped when an
+    // assertion above it throws, and this fixture leaks a CANCELLED booking with a PENDING
+    // CALENDAR_DELETE. Any later processOutbox called without a bookingId then picks those rows up.
+    try {
+      await processOutbox(event.workspaceId, bookingId, new Date(), calendar);
+      expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ externalCalendarEventId: deterministicId, notificationStatus: "RETRY_PENDING" });
+      expect(await db.integrationOutbox.findUniqueOrThrow({ where: { idempotencyKey: `calendar:delete:${bookingId}:absent` } })).toMatchObject({ status: "RETRY", lastErrorCode: "PROVIDER_OPERATION_FAILED" });
+      expect(await db.integrationOutbox.findUniqueOrThrow({ where: { idempotencyKey: `calendar:create:${bookingId}:absent` } })).toMatchObject({ status: "RETRY", lastErrorCode: null });
+    } finally { await db.booking.delete({ where: { id: bookingId } }); }
   });
 
   it("rejects a poisoned create's late catch after recovery delete supersedes its lease", async () => {
@@ -307,12 +311,16 @@ describe("calendar outbox ownership and lease recovery", () => {
     await db.integrationOutbox.create({ data: { workspaceId: event.workspaceId, bookingId, kind: "CALENDAR_DELETE", idempotencyKey: `calendar:delete:${bookingId}:recovery` } });
     process.env.GOOGLE_CLIENT_ID = "test-client"; process.env.GOOGLE_CLIENT_SECRET = "test-secret"; process.env.GOOGLE_REFRESH_TOKEN = "test-refresh"; process.env.DEMO_MODE = "true"; process.env.GOOGLE_ENV_WORKSPACE_ID = event.workspaceId;
     const calendar: CalendarService = { async getBusyIntervals() { return []; }, async createBookingEvent() { throw new Error("poisoned create must not resume"); }, async updateBookingEvent() {}, async deleteBookingEvent() { return { eventId: deterministicId, providerAbsent: false }; } };
-    const recovery = await processOutbox(event.workspaceId, bookingId, new Date(), calendar);
-    expect(recovery.pending).toBe(0);
-    expect(await recordOutboxRetry(poisoned, event.workspaceId, poisonLease, 0, new Date())).toBe(false);
-    expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ externalCalendarEventId: null, notificationStatus: "GOOGLE_UPDATE_ACCEPTED" });
-    expect(await db.integrationOutbox.findUniqueOrThrow({ where: { id: poisoned.id } })).toMatchObject({ status: "COMPLETED", lastErrorCode: "SUPERSEDED_BY_RECOVERY_DELETE" });
-    expect(await db.integrationOutbox.count({ where: { bookingId, status: { in: ["PENDING", "RETRY", "PROCESSING"] } } })).toBe(0);
-    await db.booking.delete({ where: { id: bookingId } });
+    // try/finally, not a trailing delete: these suites share one SQLite database, and a failure here
+    // used to leak the booking with a PENDING CALENDAR_DELETE still attached. The next run then saw
+    // those rows in recovery.pending and failed too, so one bad run poisoned every later one.
+    try {
+      const recovery = await processOutbox(event.workspaceId, bookingId, new Date(), calendar);
+      expect(recovery.pending).toBe(0);
+      expect(await recordOutboxRetry(poisoned, event.workspaceId, poisonLease, 0, new Date())).toBe(false);
+      expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ externalCalendarEventId: null, notificationStatus: "GOOGLE_UPDATE_ACCEPTED" });
+      expect(await db.integrationOutbox.findUniqueOrThrow({ where: { id: poisoned.id } })).toMatchObject({ status: "COMPLETED", lastErrorCode: "SUPERSEDED_BY_RECOVERY_DELETE" });
+      expect(await db.integrationOutbox.count({ where: { bookingId, status: { in: ["PENDING", "RETRY", "PROCESSING"] } } })).toBe(0);
+    } finally { await db.booking.delete({ where: { id: bookingId } }); }
   });
 });

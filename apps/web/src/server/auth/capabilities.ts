@@ -153,3 +153,14 @@ export async function acknowledgeBookingManageSession(request: Request, bookingI
 }
 
 export const manageCookieOptions = { httpOnly: true, sameSite: "strict" as const, secure: process.env.NODE_ENV === "production", path: "/" };
+
+// Which booking this browser last held a manage session for. The manage cookie above is the authority
+// and its name is a hash of the booking id, so nothing can work back from it to ask "does this visitor
+// have an appointment?" -- which is exactly what /book needs in order to offer them a way back to it.
+//
+// This carries no authority of its own: it names a booking, and every read still has to satisfy the
+// manage session or an organizer cookie. A stale value costs nothing, because the manage page already
+// answers an expired session with the recover-my-link form. sameSite lax so it survives arriving from
+// an emailed link; __Host- in production pins it to the booking origin with no Domain attribute.
+export function lastBookingCookieName() { return process.env.NODE_ENV === "production" ? "__Host-snag_booking" : "snag_booking"; }
+export const lastBookingCookieOptions = { httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 * 120 };

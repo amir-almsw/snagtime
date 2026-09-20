@@ -22,7 +22,7 @@ async function requestAccountAction(emailInput: string, purpose: AccountTokenPur
   const userId=user?.id??`ineligible-user-${randomUUID()}`,workspaceId=user?.workspaceId??`ineligible-workspace-${randomUUID()}`;
   const tokenId=randomBytes(18).toString("base64url"),outboxId=randomUUID(),binding=accountTokenBinding(workspaceId,userId,email),authority=createActionToken(purpose,binding,tokenId);
   const expiresAt=new Date(now.getTime()+(purpose==="PASSWORD_RESET"?30*60_000:24*60*60_000));
-  const payloadJson=JSON.stringify({tokenId}),idempotencyKey=`email:${purpose}:${tokenId}`,subject=purpose==="EMAIL_VERIFY"?"Verify your SnagTime email":"Reset your SnagTime password";
+  const payloadJson=JSON.stringify({tokenId}),idempotencyKey=`email:${purpose}:${tokenId}`,subject=purpose==="EMAIL_VERIFY"?"Verify your Dvision Studio email":"Reset your Dvision Studio password";
   await db.$transaction(async(tx)=>{
     if(process.env.DATABASE_PROVIDER==="postgresql"&&process.env.NODE_ENV==="production") await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["tempocove-account-recovery-v1",purpose,email])},0)) IS NULL AS "recovery_lock"`;
     else await tx.$queryRaw`SELECT ${email} AS "recovery_lock"`;

@@ -8,16 +8,17 @@ const envIndex = args.indexOf("--env");
 const envPath = resolve(envIndex >= 0 ? args[envIndex + 1] || "" : ".env.local");
 const templateKeys = [
   "DATABASE_URL", "AUTH_SECRET", "NEXTAUTH_SECRET", "TOKEN_ENCRYPTION_KEY", "NEXT_PUBLIC_APP_URL",
+  "CLIENT_GATE_PASSWORD_HASH", "CLIENT_GATE_SECRET", "CLIENT_GATE_PASSWORD_VERSION",
   "DEMO_MODE", "DEMO_HOST_EMAIL", "DEMO_HOST_PASSWORD", "CALENDAR_PROVIDER", "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN", "GOOGLE_ENV_WORKSPACE_ID", "GOOGLE_CALENDAR_ID", "OUTBOX_WORKER_ENABLED",
   "OUTBOX_POLL_INTERVAL_MS", "PAYMENTS_PROVIDER", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
   "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", "STRIPE_CLAIMABLE_SANDBOX",
   "EMAIL_PROVIDER", "EMAIL_TOKEN_SECRET", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM", "EMAIL_REPLY_TO", "EMAIL_SENDER_DOMAIN",
 ];
-const requiredKeys = ["DATABASE_URL", "TOKEN_ENCRYPTION_KEY", "NEXT_PUBLIC_APP_URL", "DEMO_MODE", "DEMO_HOST_EMAIL", "DEMO_HOST_PASSWORD", "CALENDAR_PROVIDER", "OUTBOX_WORKER_ENABLED", "OUTBOX_POLL_INTERVAL_MS", "PAYMENTS_PROVIDER", "EMAIL_PROVIDER"];
+const requiredKeys = ["DATABASE_URL", "TOKEN_ENCRYPTION_KEY", "NEXT_PUBLIC_APP_URL", "DEMO_MODE", "DEMO_HOST_EMAIL", "DEMO_HOST_PASSWORD", "CALENDAR_PROVIDER", "OUTBOX_WORKER_ENABLED", "OUTBOX_POLL_INTERVAL_MS", "PAYMENTS_PROVIDER", "EMAIL_PROVIDER", "CLIENT_GATE_PASSWORD_HASH", "CLIENT_GATE_SECRET"];
 
 function fail(messages) {
-  console.error("SnagTime demo preflight failed:");
+  console.error("Demo preflight failed:");
   for (const message of messages) console.error(`- ${message}`);
   process.exitCode = 1;
 }
@@ -40,7 +41,7 @@ catch { fail(["The selected environment file is missing or invalid."]); process.
 const values = templateMode ? localParsed.values : new Map(Object.entries(process.env).map(([key, value]) => [key, value ?? ""]));
 if (!templateMode) for (const [key, value] of localParsed.values) if (!values.has(key)) values.set(key, value);
 const duplicates = localParsed.duplicates.filter((key) => templateKeys.includes(key)); const errors = [];
-if (duplicates.length) errors.push(`Duplicate SnagTime variables: ${[...new Set(duplicates)].sort().join(", ")}`);
+if (duplicates.length) errors.push(`Duplicate environment variables: ${[...new Set(duplicates)].sort().join(", ")}`);
 const missing = (templateMode ? templateKeys : requiredKeys).filter((key) => !values.has(key)); if (missing.length) errors.push(`Missing variables: ${missing.join(", ")}`);
 
 if (!templateMode) {
@@ -49,6 +50,10 @@ if (!templateMode) {
   if (Buffer.byteLength(authSecret, "utf8") < 32 || authSecret.startsWith("replace-with-")) errors.push("AUTH_SECRET or NEXTAUTH_SECRET must be a non-placeholder value of at least 32 bytes.");
   const tokenKey = values.get("TOKEN_ENCRYPTION_KEY") || "";
   if (!/^[0-9a-fA-F]{64}$/.test(tokenKey) || new Set(tokenKey.match(/../g) || []).size < 16) errors.push("TOKEN_ENCRYPTION_KEY must be 32 diverse random bytes encoded as 64 hex characters.");
+  const gateHash = values.get("CLIENT_GATE_PASSWORD_HASH") || "";
+  if (!gateHash.startsWith("scrypt:v1:")) errors.push("CLIENT_GATE_PASSWORD_HASH must be a scrypt:v1 hash; rerun `npm run setup -- --force` to generate the client gate credentials.");
+  const gateSecret = values.get("CLIENT_GATE_SECRET") || "";
+  if (Buffer.byteLength(gateSecret, "utf8") < 32 || gateSecret.startsWith("replace-with-")) errors.push("CLIENT_GATE_SECRET must be a non-placeholder value of at least 32 bytes.");
   const password = values.get("DEMO_HOST_PASSWORD") || "";
   if (password.length < 12 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password) || password.startsWith("replace-with-")) errors.push("DEMO_HOST_PASSWORD must be a non-placeholder strong password of at least 12 characters.");
   if (values.get("DEMO_MODE") !== "true") errors.push("DEMO_MODE must equal true for the seeded local login.");
@@ -73,4 +78,4 @@ if (!templateMode) {
 }
 
 if (errors.length) fail(errors);
-else console.log(templateMode ? "SnagTime environment template contract is valid." : `${freeMode ? "SnagTime free-demo" : "SnagTime demo"} preflight passed against the local environment; no configured values were printed.`);
+else console.log(templateMode ? "Environment template contract is valid." : `${freeMode ? "Free-demo" : "Demo"} preflight passed against the local environment; no configured values were printed.`);

@@ -5,9 +5,9 @@ import { assertProductionRuntimeSecurity, createSessionForUser, getSessionRecord
 import { verifyPassword } from "@/server/auth/password";
 import { changeAccountPassword, getAccountSummary, registerAccount, updateMembershipRole } from "@/server/services/accounts";
 import { getAvailability } from "@/server/services/availability";
-import { setBranding } from "@/server/services/branding";
+import { getBranding, setBranding } from "@/server/services/branding";
+import { brandingInput } from "@/server/validation";
 import { getEventTypeById, listEventTypes } from "@/server/services/event-types";
-import { POST as registerRoute } from "@/app/api/auth/register/route";
 import { GET as sessionRoute, POST as loginRoute } from "@/app/api/auth/session/route";
 import { PATCH as profileImageRoute } from "@/app/api/account/profile-image/route";
 import { resetRateLimitsForTest } from "@/server/rate-limit";
@@ -89,6 +89,19 @@ describe("production workspace accounts", () => {
     await expect(getAccountSummary(created.access)).resolves.toMatchObject({ workspace: { name: "Renamed workspace" }, workspaces: [{ name: "Renamed workspace" }] });
   });
 
+  it("returns only the branding contract, so the settings page can send a saved result straight back", async () => {
+    const created = await account("branding-shape", false);
+    const input = { workspaceName: "Round trip", logoUrl: null, accentColor: "#2255AA", description: "First save", footerText: null };
+    const saved = await setBranding(created.workspace.id, created.user.id, input);
+    expect(Object.keys(saved).sort()).toEqual(Object.keys(input).sort());
+    // The exact failure mode: a strict schema rejecting id/workspaceId/userId echoed from the row.
+    expect(() => brandingInput.parse(saved)).not.toThrow();
+    const loaded = await getBranding(created.workspace.id);
+    expect(Object.keys(loaded).sort()).toEqual(Object.keys(input).sort());
+    expect(() => brandingInput.parse(loaded)).not.toThrow();
+    await expect(setBranding(created.workspace.id, created.user.id, { ...loaded, accentColor: "#112233" })).resolves.toMatchObject({ accentColor: "#112233" });
+  });
+
   it("canonicalizes branding images, rejects new remote URLs, and preserves an unchanged legacy remote URL", async () => {
     const created = await account("branding-image", false);
     const input = { workspaceName: "Brand image", logoUrl: "https://attacker.example/new.png", accentColor: "#2255AA", description: null, footerText: null };
@@ -140,16 +153,6 @@ describe("production workspace accounts", () => {
     await expect(before.json()).resolves.toMatchObject({ data: { user: { id: created.user.id, imageUrl: legacy } } });
     const cleared = await profileImageRoute(profileImageRequest(created.token, null)); expect(cleared.status).toBe(200);
     await expect(db.user.findUniqueOrThrow({ where: { id: created.user.id } })).resolves.toMatchObject({ imageUrl: null });
-  });
-
-  it("returns identical generic 202 registration responses without establishing a session", async () => {
-    const email = `route-${crypto.randomUUID()}@example.com`; const payload = { name: "Route Owner", email, password: "Strong!Workspace9", workspaceName: "Route Workspace", timeZone: "UTC" };
-    const call = () => registerRoute(new Request("http://localhost:3000/api/auth/register", { method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json" }, body: JSON.stringify(payload) }));
-    const first = await call(); const second = await call();
-    expect({ status: first.status, body: await first.json(), cookie: first.headers.get("set-cookie") }).toEqual({ status: 202, body: { data: { accepted: true, verificationPending: true } }, cookie: null });
-    expect({ status: second.status, body: await second.json(), cookie: second.headers.get("set-cookie") }).toEqual({ status: 202, body: { data: { accepted: true, verificationPending: true } }, cookie: null });
-    const user = await db.user.findUniqueOrThrow({ where: { email }, include: { memberships: true } }); userIds.push(user.id); workspaceIds.push(user.memberships[0]!.workspaceId);
-    expect(await db.user.count({ where: { email } })).toBe(1); expect(await db.authSession.count({ where: { userId: user.id } })).toBe(0);
   });
 
   it("returns the same authentication failure for unknown and known accounts with a wrong password", async () => {
@@ -247,10 +250,14 @@ describe("production workspace accounts", () => {
     vi.stubEnv("NODE_ENV", "production"); vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://example.com");
     expect(() => assertProductionRuntimeSecurity()).toThrow(/canonical HTTPS/);
     vi.stubEnv("BOOKING_CAPABILITY_KEY_ID", "production-capability-v1"); vi.stubEnv("BOOKING_CAPABILITY_SECRET", "independent-booking-capability-secret-at-least-thirty-two");
-    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://example.com/"); vi.stubEnv("AUTH_SECRET", authSecret); vi.stubEnv("DATABASE_PROVIDER", "postgresql"); vi.stubEnv("DATABASE_URL", "postgresql://app@example.com/tempocove?sslmode=verify-full&sslrootcert=/run/secrets/ca&connect_timeout=3&pool_timeout=3&statement_timeout=2000"); vi.stubEnv("MONITOR_DATABASE_URL", "postgresql://monitor@example.com/tempocove?sslmode=verify-full&sslrootcert=/run/secrets/ca"); vi.stubEnv("RATE_LIMIT_PROVIDER", "postgresql"); vi.stubEnv("RATE_LIMIT_HASH_SECRET", "rate-limit-secret-that-is-at-least-thirty-two"); vi.stubEnv("TENANT_CONTEXT_SECRET", "tenant-context-secret-that-is-at-least-thirty-two"); vi.stubEnv("TOKEN_ENCRYPTION_KEY", "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"); vi.stubEnv("OUTBOX_WORKER_MODE", "dedicated"); vi.stubEnv("PAYMENTS_PROVIDER", "stripe"); vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_configuration_fixture"); vi.stubEnv("STRIPE_WEBHOOK_SECRET", "whsec_configuration_fixture"); vi.stubEnv("CALENDAR_PROVIDER", "google"); vi.stubEnv("GOOGLE_CLIENT_ID", "fixture.apps.googleusercontent.com"); vi.stubEnv("GOOGLE_CLIENT_SECRET", "fixture-client-secret-long"); vi.stubEnv("DEMO_MODE", "false"); vi.stubEnv("TRUST_PROXY", "true"); vi.stubEnv("PROXY_SHARED_SECRET", "short");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://example.com/"); vi.stubEnv("AUTH_SECRET", authSecret); vi.stubEnv("DATABASE_PROVIDER", "postgresql"); vi.stubEnv("DATABASE_URL", "postgresql://app@example.com/tempocove?sslmode=verify-full&sslrootcert=/run/secrets/ca&connect_timeout=3&pool_timeout=3&statement_timeout=2000"); vi.stubEnv("MONITOR_DATABASE_URL", "postgresql://monitor@example.com/tempocove?sslmode=verify-full&sslrootcert=/run/secrets/ca"); vi.stubEnv("RATE_LIMIT_PROVIDER", "postgresql"); vi.stubEnv("RATE_LIMIT_HASH_SECRET", "rate-limit-secret-that-is-at-least-thirty-two"); vi.stubEnv("TENANT_CONTEXT_SECRET", "tenant-context-secret-that-is-at-least-thirty-two"); vi.stubEnv("TOKEN_ENCRYPTION_KEY", "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"); vi.stubEnv("OUTBOX_WORKER_MODE", "dedicated"); vi.stubEnv("PAYMENTS_PROVIDER", "stub"); vi.stubEnv("CALENDAR_PROVIDER", "google"); vi.stubEnv("GOOGLE_CLIENT_ID", "fixture.apps.googleusercontent.com"); vi.stubEnv("GOOGLE_CLIENT_SECRET", "fixture-client-secret-long"); vi.stubEnv("DEMO_MODE", "false"); vi.stubEnv("TRUST_PROXY", "true"); vi.stubEnv("PROXY_SHARED_SECRET", "short");
     vi.stubEnv("DATABASE_URL", "postgresql://app@example.com/tempocove?sslmode=verify-full&sslrootcert=/run/secrets/ca&connect_timeout=3&pool_timeout=20&connection_limit=20&statement_timeout=2000");
     expect(() => assertProductionRuntimeSecurity()).toThrow(/PROXY_SHARED_SECRET/);
     vi.stubEnv("PROXY_SHARED_SECRET", "proxy-secret-that-is-at-least-thirty-two-bytes"); vi.stubEnv("OPERATOR_HEALTH_SECRET", "operator-secret-that-is-at-least-thirty-two"); vi.stubEnv("EMAIL_PROVIDER", "smtp"); vi.stubEnv("EMAIL_TOKEN_SECRET", "production-email-token-secret-at-least-thirty-two"); vi.stubEnv("SMTP_HOST", "smtp.example.com"); vi.stubEnv("SMTP_PORT", "587"); vi.stubEnv("SMTP_TLS_MODE", "starttls"); vi.stubEnv("SMTP_USER", "user"); vi.stubEnv("SMTP_PASSWORD", "password"); vi.stubEnv("EMAIL_FROM", "SnagTime <mail@example.com>"); vi.stubEnv("EMAIL_REPLY_TO", "support@example.com"); vi.stubEnv("EMAIL_SENDER_DOMAIN", "example.com");
+    expect(() => assertProductionRuntimeSecurity()).toThrow(/CLIENT_GATE/);
+    vi.stubEnv("CLIENT_GATE_PASSWORD_HASH", "scrypt:v1:fixture-salt:fixture-derived-key"); vi.stubEnv("CLIENT_GATE_SECRET", "client-gate-secret-that-is-at-least-thirty-two");
+    expect(() => assertProductionRuntimeSecurity()).toThrow(/SURFACE/);
+    vi.stubEnv("SURFACE", "book");
     expect(() => assertProductionRuntimeSecurity()).not.toThrow();
   });
 

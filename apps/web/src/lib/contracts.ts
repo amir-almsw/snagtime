@@ -47,7 +47,9 @@ export type BookingSlot = {
 };
 export type BookingAnswer = { questionId: string | null; questionLabel: string; value: unknown };
 export type BookingSummary = {
-  id: string; eventTypeId: string; eventTypeName: string; inviteeName: string; inviteeEmail: string;
+  // `id` is the internal cuid; `reference` is the short code the client is given and quotes back. Null
+  // only for rows created outside createBooking, which no client was ever handed.
+  id: string; reference: string | null; eventTypeId: string; eventTypeName: string; inviteeName: string; inviteeEmail: string;
   eventTitleSnapshot: string; locationType: "GOOGLE_MEET" | "PHONE" | "IN_PERSON" | "CUSTOM";
   locationValue: string | null; calendarProvider: "google" | "local" | "provider_recovery_required";
   inviteeTimeZone: string; startAt: string; endAt: string;
@@ -76,6 +78,9 @@ export type CreateBookingInput = {
   startAt: string; inviteeName: string; inviteeEmail: string; inviteeTimeZone: string;
   notes?: string; durationId?: string; answers?: Array<{ questionId: string; value: unknown }>;
 };
+// The organizer's own booking form posts to the dashboard collection, so the event type travels by id
+// inside the workspace rather than by public slug.
+export type HostBookingInput = CreateBookingInput & { eventTypeId: string };
 export type CreateBookingResult = {
   bookingId: string; status: BookingSummary["status"]; checkoutUrl: string | null;
   checkoutState: "NOT_REQUIRED" | "READY" | "RETRY_REQUIRED";

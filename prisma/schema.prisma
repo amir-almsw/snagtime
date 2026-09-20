@@ -33,6 +33,13 @@ model User {
 model Workspace {
   id                    String                 @id @default(cuid())
   name                  String
+  // Where the studio's own booking notices are delivered, which is deliberately not the address the
+  // organizer signs in with: the login stays personal, the notices go to a shared shop mailbox.
+  // It lives here rather than in configuration because the EmailOutbox insert policies pin the
+  // recipient to an address the database can see -- an environment variable is invisible to RLS, and
+  // setting one produced a 500 on every booking and cancellation before this column existed.
+  // Null means the two are the same address, which is the single-operator default.
+  notificationEmail     String?
   timeZone              String                 @default("America/Chicago")
   onboardingCompletedAt DateTime?
   createdAt             DateTime               @default(now())
@@ -207,6 +214,15 @@ model WorkspaceBranding {
 
 model Booking {
   id                      String    @id @default(cuid())
+  // Short, unambiguous code a client reads off a confirmation and retypes to find their appointment.
+  // The cuid above is the internal identity and is never asked of a person.
+  //
+  // Nullable because createBooking is the only path that mints one, and it always does -- the test and
+  // operator-script fixtures that insert Booking rows directly have no client and need no code. A null
+  // simply never matches a lookup, which is the correct outcome for a row no one was ever given. Any
+  // future path that creates a real client booking must call generateBookingReference(); the invariant
+  // is pinned by "createBooking reference invariant" in booking-reference.test.ts, not by the column.
+  reference               String?   @unique
   workspaceId             String
   eventTypeId             String
   hostId                  String

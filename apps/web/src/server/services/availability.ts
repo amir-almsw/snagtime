@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import type { AvailabilityInterval, AvailabilitySchedule, BookingSlot } from "@/lib/contracts";
 import { db } from "@/server/db";
-import { enterDatabaseAction } from "@/server/db-context";
+import { currentDatabaseContext, enterDatabaseAction, installDatabaseContext } from "@/server/db-context";
 
 export type BusyInterval = { start: Date; end: Date };
 export type SlotEventType = {
@@ -80,7 +80,7 @@ export function generateSlots({
             durationId: eventType.durationId ?? "legacy-default",
             durationMinutes: eventType.durationMinutes,
             priceCents: eventType.priceCents ?? 0,
-            currency: eventType.currency ?? "usd",
+            currency: eventType.currency ?? "eur",
           });
         }
         cursor = cursor.plus({ minutes: 15 });
@@ -137,7 +137,15 @@ export async function setAvailability(workspaceId: string, userId: string, input
       workspaceId, userId, dateKey: item.dateKey, isAvailable: item.isAvailable,
       startMinute: item.isAvailable ? item.startMinute : null, endMinute: item.isAvailable ? item.endMinute : null,
     })) });
+    // The profile row is the one statement here that is not availability: app_user_update demands
+    // action='account_write', so under this transaction's availability_write tag it would match no
+    // row and Prisma would raise P2025 with nothing in the PostgreSQL log to explain it. Re-tagging
+    // the open transaction keeps the schedule and the profile atomic while granting the narrower
+    // authority only for this statement, then restores it so anything added later stays availability.
+    const context = currentDatabaseContext();
+    if (context) await installDatabaseContext(tx, { ...context, action: "account_write" });
     await tx.user.update({ where: { id: userId }, data: { timeZone: input.timeZone } });
+    if (context) await installDatabaseContext(tx, context);
   });
   return getAvailability(workspaceId, userId);
 }

@@ -8,6 +8,7 @@ import { currentDatabaseContext, enterDatabaseAction } from "@/server/db-context
 import { decryptToken, encryptToken } from "@/server/crypto/tokens";
 import { AppError } from "@/server/errors";
 import type { BusyInterval } from "@/server/services/availability";
+import { appBaseUrl, bookingTokenBinding, materializeActionToken } from "@/server/services/notifications";
 
 export type CalendarBooking = Booking & { eventType: EventType; host: Pick<User,"id"|"name"|"email"|"timeZone"> };
 export const CALENDAR_PROVIDER_TIMEOUT_MS = 15_000;
@@ -241,8 +242,9 @@ export class GoogleCalendarService implements CalendarService {
   }
 
   async createBookingEvent(booking: CalendarBooking) {
+    const description = await bookingEventDescription(booking);
     const { calendar, calendarId, flushTokens } = await this.client(booking.hostId, booking.workspaceId); const eventId = providerCalendarEventId(booking.id);
-    try { const response = await calendar.events.insert(googleCreateEventRequest(calendarId, eventId, booking), { timeout: CALENDAR_PROVIDER_TIMEOUT_MS });
+    try { const response = await calendar.events.insert(googleCreateEventRequest(calendarId, eventId, booking, description), { timeout: CALENDAR_PROVIDER_TIMEOUT_MS });
     return { eventId: response.data.id || eventId, etag: response.data.etag, disposition: "created" as const };
     } catch (error) {
       if (isProviderConflict(error)) return { eventId, disposition: "conflict" as const };
@@ -252,6 +254,7 @@ export class GoogleCalendarService implements CalendarService {
 
   async updateBookingEvent(booking: CalendarBooking) {
     const eventId = booking.externalCalendarEventId || providerCalendarEventId(booking.id);
+    const description = await bookingEventDescription(booking);
     const { calendar, calendarId, flushTokens } = await this.client(booking.hostId, booking.workspaceId);
     try {
       return await reconcileGoogleEventUpdate(
@@ -262,7 +265,7 @@ export class GoogleCalendarService implements CalendarService {
           if (!creation) throw new Error("GOOGLE_EVENT_CREATE_REQUIRED");
           return typeof creation === "string" ? { disposition: "conflict" as const } : creation;
         },
-        async (etag) => (await calendar.events.patch(googleUpdateEventRequest(calendarId, eventId, booking), googleConditionalRequestOptions(etag))).data.etag,
+        async (etag) => (await calendar.events.patch(googleUpdateEventRequest(calendarId, eventId, booking, description), googleConditionalRequestOptions(etag))).data.etag,
       );
     } finally { await flushTokens(); }
   }
@@ -285,13 +288,38 @@ export class GoogleCalendarService implements CalendarService {
 }
 
 export function providerCalendarEventId(bookingId: string) { return `tc${createHash("sha256").update(bookingId).digest("hex").slice(0, 40)}`; }
-export function googleCreateEventRequest(calendarId: string, eventId: string, booking: CalendarBooking) {
+// With Google's invitation acting as the client's confirmation, the event body must carry everything the
+// suppressed email would have: the custom answers for the organizer's phone, the client's only manage link,
+// and the warning that an RSVP decline is not a cancellation (nothing reconciles a "No" back into the app).
+export async function bookingEventDescription(booking: CalendarBooking, now = new Date()) {
+  const lines: string[] = [];
+  if (booking.notes) lines.push(booking.notes);
+  const answers = await db.bookingAnswer.findMany({ where: { bookingId: booking.id }, orderBy: { questionLabel: "asc" } });
+  for (const answer of answers) {
+    let value: unknown; try { value = JSON.parse(answer.valueJson); } catch { value = answer.valueJson; }
+    const rendered = Array.isArray(value) ? value.join(", ") : typeof value === "boolean" ? (value ? "Yes" : "No") : String(value ?? "");
+    if (rendered.trim()) lines.push(`${answer.questionLabel}: ${rendered.trim()}`);
+  }
+  // A booking mirrored to Google supersedes its confirmation email when the invite lands, so for those
+  // clients this event is the only place the reference ever appears. Without it they would have no way
+  // back in but the link below, which is exactly what /manage exists to recover from.
+  if (booking.reference) lines.push(`Booking reference: ${booking.reference}`);
+  const recovery = await db.bookingRecoveryToken.findFirst({ where: { bookingId: booking.id, consumedAt: null, revokedAt: null, expiresAt: { gt: now } }, orderBy: { createdAt: "desc" } });
+  if (recovery) {
+    const token = materializeActionToken(recovery.id, "BOOKING_RECOVERY", bookingTokenBinding(recovery.workspaceId, recovery.bookingId, recovery.email));
+    lines.push(`Need to change or cancel? Use this link:\n${appBaseUrl()}/manage/${booking.id}/reschedule#recovery=${encodeURIComponent(token)}`);
+    lines.push(`Lost the link? Go to ${appBaseUrl()}/manage and enter your booking reference.`);
+    lines.push("Declining this calendar invitation does NOT cancel the appointment. Use the link above, or contact the shop.");
+  }
+  return lines.join("\n\n") || undefined;
+}
+export function googleCreateEventRequest(calendarId: string, eventId: string, booking: CalendarBooking, description?: string) {
   const locationType = booking.locationTypeSnapshot || booking.eventType.locationType;
   const title = booking.eventTitleSnapshot || booking.eventType.name;
   return {
     calendarId, conferenceDataVersion: locationType === "GOOGLE_MEET" ? 1 : 0, sendUpdates: "all" as const,
     requestBody: {
-      id: eventId, summary: `${title} with ${booking.inviteeName}`, description: booking.notes || undefined,
+      id: eventId, summary: `${title} with ${booking.inviteeName}`, description: description ?? (booking.notes || undefined),
       location: booking.locationValueSnapshot || undefined,
       start: { dateTime: booking.startAt.toISOString(), timeZone: booking.host.timeZone }, end: { dateTime: booking.endAt.toISOString(), timeZone: booking.host.timeZone },
       attendees: [{ email: booking.inviteeEmail, displayName: booking.inviteeName }],
@@ -300,10 +328,12 @@ export function googleCreateEventRequest(calendarId: string, eventId: string, bo
     },
   };
 }
-export function googleUpdateEventRequest(calendarId: string, eventId: string, booking: CalendarBooking) {
+export function googleUpdateEventRequest(calendarId: string, eventId: string, booking: CalendarBooking, description?: string) {
   return { calendarId, eventId, sendUpdates: "all" as const, requestBody: {
     start: { dateTime: booking.startAt.toISOString(), timeZone: booking.host.timeZone }, end: { dateTime: booking.endAt.toISOString(), timeZone: booking.host.timeZone },
     attendees: [{ email: booking.inviteeEmail, displayName: booking.inviteeName }],
+    // Rescheduling revokes and reissues the recovery token, so the event's manage link must be refreshed with it.
+    ...(description !== undefined ? { description } : {}),
   } };
 }
 export function googleDeleteEventRequest(calendarId: string, eventId: string) { return { calendarId, eventId, sendUpdates: "all" as const }; }
@@ -380,20 +410,24 @@ class FallbackCalendarService implements CalendarService {
   private readonly google = new GoogleCalendarService();
   private readonly proofGoogle = new ProofGoogleCalendarService();
   private readonly local = new LocalCalendarService();
-  private async service(userId: string, workspaceId?: string) {
+  // Availability is served from the database (hostBookedIntervals in bookings.ts). Provider busy time is a
+  // supplementary source for blocks the host typed straight into Google Calendar, so a Google that is
+  // configured but not connected contributes no busy time instead of failing the read, and a booking made
+  // in that state is recorded as local so its mirror is never attempted against missing credentials.
+  // Mutations never take this path: bookingService() still fails closed on the provider recorded at booking time.
+  private async busySource(userId: string, workspaceId?: string): Promise<CalendarService | null> {
     if (process.env.CALENDAR_PROVIDER === "local" && process.env.NODE_ENV !== "production") return this.local;
-    if (process.env.CALENDAR_PROVIDER !== "google" || !await googleCalendarReady(userId, workspaceId)) throw new AppError("GOOGLE_CALENDAR_RETRY", "This workspace requires a live Google Calendar connection before availability can be trusted.", 503);
+    if (process.env.CALENDAR_PROVIDER !== "google" || !await googleCalendarReady(userId, workspaceId)) return null;
     return providerProofMode() ? this.proofGoogle : this.google;
   }
-  async getBusyIntervals(userId: string, timeMin: Date, timeMax: Date, workspaceId?: string) { return (await this.service(userId, workspaceId)).getBusyIntervals(userId, timeMin, timeMax, workspaceId); }
+  async getBusyIntervals(userId: string, timeMin: Date, timeMax: Date, workspaceId?: string) { const source = await this.busySource(userId, workspaceId); return source ? source.getBusyIntervals(userId, timeMin, timeMax, workspaceId) : []; }
   async getBusyIntervalsExcludingEvent(userId: string, timeMin: Date, timeMax: Date, excludedEventId: string, requiredProvider?: "google" | "local", workspaceId?: string) {
-    let service: CalendarService;
-    if (requiredProvider === "google") {
-      if (!await googleCredentialsReady(userId, workspaceId)) throw new AppError("GOOGLE_CALENDAR_RETRY", "This accepted Google booking requires its configured provider for conflict checks.", 503);
-      service = providerProofMode() ? this.proofGoogle : this.google;
-    } else if (requiredProvider === "local") service = this.local;
-    else service = await this.service(userId, workspaceId);
-    return service.getBusyIntervalsExcludingEvent?.(userId, timeMin, timeMax, excludedEventId, requiredProvider, workspaceId) ?? service.getBusyIntervals(userId, timeMin, timeMax, workspaceId);
+    let source: CalendarService | null;
+    if (requiredProvider === "google") source = await googleCredentialsReady(userId, workspaceId) ? providerProofMode() ? this.proofGoogle : this.google : null;
+    else if (requiredProvider === "local") source = this.local;
+    else source = await this.busySource(userId, workspaceId);
+    if (!source) return [];
+    return source.getBusyIntervalsExcludingEvent?.(userId, timeMin, timeMax, excludedEventId, requiredProvider, workspaceId) ?? source.getBusyIntervals(userId, timeMin, timeMax, workspaceId);
   }
   private async bookingService(booking: CalendarBooking) {
     if (booking.calendarProviderSnapshot === "provider_recovery_required") throw new AppError("CALENDAR_PROVIDER_RECOVERY_REQUIRED", "This upgraded booking requires provider-lineage reconciliation before calendar mutation.", 503);
@@ -410,7 +444,7 @@ class FallbackCalendarService implements CalendarService {
     }
     return (await this.bookingService(booking)).deleteBookingEvent(booking);
   }
-  async providerKind(userId: string, workspaceId?: string) { const service: CalendarService = await this.service(userId, workspaceId); return await service.providerKind?.(userId, workspaceId) ?? "google" as const; }
+  async providerKind(userId: string, workspaceId?: string) { const source = await this.busySource(userId, workspaceId); if (!source) return "local" as const; return (await source.providerKind?.(userId, workspaceId)) ?? "google" as const; }
   async candidateEventId(booking: CalendarBooking) { return booking.calendarProviderSnapshot === "google" || booking.calendarProviderSnapshot === "provider_recovery_required" ? providerCalendarEventId(booking.id) : null; }
 }
 
@@ -498,7 +532,7 @@ export async function disconnectGoogleCalendar(userId: string, revoke: (token: s
     return { id: fenced.id, credentialUserId: fenced.userId, token: decryptToken(fenced.refreshToken) || decryptToken(fenced.accessToken), leaseToken };
   });
   if (!claimed) {
-    if (environmentGoogleCredentialAllowed(resolvedWorkspaceId)) throw new AppError("ENV_CREDENTIAL_MANAGED_EXTERNALLY", "The environment-provided Google credential must be revoked outside SnagTime.", 409);
+    if (environmentGoogleCredentialAllowed(resolvedWorkspaceId)) throw new AppError("ENV_CREDENTIAL_MANAGED_EXTERNALLY", "The environment-provided Google credential must be revoked outside this app.", 409);
     return { disconnected: true as const };
   }
   clearGoogleScopeHealthCache(resolvedWorkspaceId);

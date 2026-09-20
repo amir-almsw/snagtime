@@ -1,5 +1,6 @@
 import { requireBookingManageSession } from "@/server/auth/capabilities";
 import { assertSameOrigin, getSessionRecord } from "@/server/auth/session";
+import { enterCapabilityDatabaseContext } from "@/server/db-context";
 import { apiError, jsonBody, ok } from "@/server/http";
 import { cancelBooking, getBookingDetail, getBookingForHost, rescheduleBooking } from "@/server/services/bookings";
 import { cancelBookingInput, rescheduleBookingInput } from "@/server/validation";
@@ -7,6 +8,13 @@ import { clientAddress, enforceRateLimit } from "@/server/rate-limit";
 
 type Context = { params: Promise<{ id: string }> };
 async function authorize(request: Request, id: string, scope: "read" | "cancel" | "reschedule") {
+  // Entered before this helper's first await so the store lands in the handler's own execution context
+  // (see db-context.ts): a context entered inside a helper after that helper's first await is discarded the
+  // moment the helper returns. requireBookingManageSession() enters it too, but only after the await below,
+  // which left getBookingDetail() with no tenant context under RLS and every manage-link read answering
+  // 404 right after a successful booking. A valid organizer cookie replaces this synchronously inside
+  // getSessionRecord(); otherwise it stays the manage-session context the handler needs.
+  enterCapabilityDatabaseContext(id);
   const organizer = await getSessionRecord(request);
   if (organizer) { await getBookingForHost(organizer.activeWorkspaceId, id); return `organizer:${organizer.id}`; }
   const session = await requireBookingManageSession(request, id, scope); return `manage:${id}:${session.id}`;

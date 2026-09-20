@@ -367,7 +367,9 @@ describe("Google Calendar notification adapter", () => {
     await expect(googleCredentialsReady(bound.id, bound.workspaceId)).resolves.toBe(true);
     await expect(googleCredentialsReady(other.id, other.workspaceId)).resolves.toBe(false);
     await expect(googleCalendarStatus(other.id, other.workspaceId)).resolves.toMatchObject({ connected: false, provider: "local", credentialSource: "none" });
-    await expect(getCalendarService().getBusyIntervals(other.id, new Date("2099-01-01Z"), new Date("2099-01-02Z"), other.workspaceId)).rejects.toMatchObject({ code: "GOOGLE_CALENDAR_RETRY" });
+    // Reads never borrow another workspace's credential: the unbound workspace gets database-only availability and a local provider.
+    await expect(getCalendarService().getBusyIntervals(other.id, new Date("2099-01-01Z"), new Date("2099-01-02Z"), other.workspaceId)).resolves.toEqual([]);
+    await expect(getCalendarService().providerKind?.(other.id, other.workspaceId)).resolves.toBe("local");
     await expect(getCalendarService().createBookingEvent({ ...bookingFixture(), workspaceId: other.workspaceId, hostId: other.id, calendarProviderSnapshot: "google" })).rejects.toMatchObject({ code: "GOOGLE_CALENDAR_RETRY" });
     vi.stubEnv("NODE_ENV", "production");
     expect(environmentGoogleCredentialAllowed(bound.workspaceId)).toBe(false);
@@ -413,18 +415,24 @@ describe("Google Calendar notification adapter", () => {
     } finally { valid.close(); }
   });
 
-  it("uses local busy data only when explicitly configured locally outside production", async () => {
+  it("serves availability without provider busy time when Google is configured but not connected", async () => {
     process.env.CALENDAR_PROVIDER = "local";
     const user = await calendarTestUser("fallback");
     expect(await getCalendarService().getBusyIntervals(user.id, new Date("2099-01-01Z"), new Date("2099-01-02Z"), user.workspaceId)).toEqual([]);
+    expect(await getCalendarService().providerKind?.(user.id, user.workspaceId)).toBe("local");
     process.env.CALENDAR_PROVIDER = "google"; process.env.GOOGLE_CLIENT_ID = "client"; process.env.GOOGLE_CLIENT_SECRET = "secret";
-    await expect(getCalendarService().getBusyIntervals(user.id, new Date("2099-01-01Z"), new Date("2099-01-02Z"), user.workspaceId)).rejects.toMatchObject({ code: "GOOGLE_CALENDAR_RETRY" });
+    // The database is the availability authority: a disconnected Google adds no busy time instead of a 503,
+    // and a booking made now is recorded as local so its mirror is never attempted against missing credentials.
+    expect(await getCalendarService().getBusyIntervals(user.id, new Date("2099-01-01Z"), new Date("2099-01-02Z"), user.workspaceId)).toEqual([]);
+    expect(await getCalendarService().providerKind?.(user.id, user.workspaceId)).toBe("local");
   });
 
   it("restricts the Google provider fake to an explicit loopback production-path proof", async () => {
     process.env.TEMPOCOVE_PROVIDER_PROOF_MODE = "true"; vi.stubEnv("NODE_ENV", "production"); process.env.NEXT_PUBLIC_APP_URL = "https://production.example.com"; process.env.CALENDAR_PROVIDER = "google";
     const user = await calendarTestUser("proof-mode");
-    await expect(getCalendarService().getBusyIntervals(user.id, new Date("2099-01-01Z"), new Date("2099-01-02Z"), user.workspaceId)).rejects.toMatchObject({ code: "GOOGLE_CALENDAR_RETRY" });
+    // Without credentials the proof fake must not engage: no busy time is fabricated and the provider stays local.
+    expect(await getCalendarService().getBusyIntervals(user.id, new Date("2099-01-01Z"), new Date("2099-01-02Z"), user.workspaceId)).toEqual([]);
+    expect(await getCalendarService().providerKind?.(user.id, user.workspaceId)).toBe("local");
     vi.unstubAllEnvs();
   });
 
@@ -434,7 +442,8 @@ describe("Google Calendar notification adapter", () => {
     await expect(getCalendarService().createBookingEvent(booking)).rejects.toMatchObject({ code: "GOOGLE_CALENDAR_RETRY" });
     await expect(getCalendarService().updateBookingEvent({ ...booking, externalCalendarEventId: "provider-event" })).rejects.toMatchObject({ code: "GOOGLE_CALENDAR_RETRY" });
     await expect(getCalendarService().deleteBookingEvent({ ...booking, externalCalendarEventId: "provider-event" })).rejects.toMatchObject({ code: "GOOGLE_CALENDAR_RETRY" });
-    await expect(getCalendarService().getBusyIntervalsExcludingEvent?.(user.id, new Date("2099-01-01Z"), new Date("2099-01-02Z"), providerCalendarEventId(booking.id), "google")).rejects.toMatchObject({ code: "GOOGLE_CALENDAR_RETRY" });
+    // Reads are different: the database already excludes the booking itself, so a missing Google adds nothing rather than blocking the reschedule.
+    await expect(getCalendarService().getBusyIntervalsExcludingEvent?.(user.id, new Date("2099-01-01Z"), new Date("2099-01-02Z"), providerCalendarEventId(booking.id), "google")).resolves.toEqual([]);
   });
 
   it("refetches and conditionally patches after GET 404 and deterministic create conflict", async () => {

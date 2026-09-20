@@ -17,3 +17,12 @@ prisma/postgresql/node_modules/
 tmp/implementation-*
 runtime/
 .next-playwright/
+
+# Production secrets mounted by compose. Never commit these.
+/secrets/
+test.env
+compose.local-test.yml
+production.env
+
+# macOS Finder metadata.
+.DS_Store

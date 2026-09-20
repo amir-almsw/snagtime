@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { availabilityInput, bookingInput, brandingInput, eventTypeInput, profileImageInput } from "@/server/validation";
+import { availabilityInput, bookingInput, brandingInput, eventTypeInput, hostBookingInput, profileImageInput } from "@/server/validation";
 import { IMAGE_DATA_URL_MAX_CHARS } from "@/server/image-ingestion";
 
 describe("public input validation", () => {
@@ -21,6 +21,14 @@ describe("public input validation", () => {
     const parsed = bookingInput.parse({ startAt: "2026-08-24T14:00:00.000Z", inviteeName: "Ada Lovelace", inviteeEmail: "ADA@EXAMPLE.COM", inviteeTimeZone: "UTC" });
     expect(parsed.inviteeEmail).toBe("ada@example.com");
     expect(() => bookingInput.parse({ ...parsed, inviteeTimeZone: "Not/AZone" })).toThrow(/IANA/);
+  });
+
+  it("makes the dashboard name the event type it is booking into", () => {
+    const base = { startAt: "2026-08-24T14:00:00.000Z", inviteeName: "Ada Lovelace", inviteeEmail: "ADA@EXAMPLE.COM", inviteeTimeZone: "UTC" };
+    // Without an event type the studio's booking has nothing to resolve inside its own workspace, and a
+    // slug taken straight from the client would be a globally unique key into anyone's calendar.
+    expect(() => hostBookingInput.parse(base)).toThrow();
+    expect(hostBookingInput.parse({ ...base, eventTypeId: "evt_1" })).toMatchObject({ eventTypeId: "evt_1", inviteeEmail: "ada@example.com" });
   });
 
   it("requires safe public booking slugs and testable pricing", () => {

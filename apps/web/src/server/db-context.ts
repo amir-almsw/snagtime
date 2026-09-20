@@ -23,10 +23,16 @@ export function enterPublicDatabaseContext(slug: string, workspaceId?: string, s
 export function enterPublicBookingDatabaseContext(eventTypeId: string, workspaceId: string, idempotencyKey: string) { enterDatabaseContext({ mode: "public", workspaceId, subject: `${eventTypeId}|${idempotencyKey}`,action:"booking_create" }); }
 export function enterCapabilityDatabaseContext(subject: string, userId?: string, workspaceId?: string, action = "capability") { enterDatabaseContext({ mode: "capability", subject, userId, workspaceId,action }); }
 export function enterProviderDatabaseContext(subject: string, workspaceId?: string, action = "provider_commit") { enterDatabaseContext({ mode: "provider", subject, workspaceId,action }); }
-export function enterDatabaseAction(action:string){
-  const current=databaseContext.getStore();
-  if(current)enterDatabaseContext({mode:current.mode,workspaceId:current.workspaceId,userId:current.userId,sessionHash:current.sessionHash,subject:current.subject,action});
+// AsyncLocalStorage.enterWith only reaches functions called after it: the store it installs is
+// discarded when the calling function returns. A context entered before the first await therefore
+// survives (it runs in the caller's own execution context), but one entered after an await never
+// reaches whoever awaited it. Anything refining a context already in flight must mutate the stored
+// object in place instead, so every frame holding the reference observes the change. Each request
+// gets its own object from the entry-point enter*, so this stays request-local.
+export function updateDatabaseContext(patch: Partial<DatabaseContext>) {
+  const current = databaseContext.getStore(); if (current) Object.assign(current, patch);
 }
+export function enterDatabaseAction(action:string){ updateDatabaseContext({ action }); }
 export function currentDatabaseContext() { return databaseContext.getStore(); }
 export async function installDatabaseContext(transaction: Record<string, unknown>, context: DatabaseContext) {
   const execute = transaction.$executeRawUnsafe as (query: string, ...values: unknown[]) => Promise<unknown>;

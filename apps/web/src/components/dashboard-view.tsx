@@ -32,20 +32,20 @@ export function DashboardView() {
     { label: "Upcoming", value: String(allUpcoming.length), detail: "Confirmed or awaiting payment", icon: "bookings" as const, tone: "brand" as const },
     { label: "This month", value: String(monthBookings.length), detail: "Bookings on your calendar", icon: "calendar" as const, tone: "blue" as const },
     { label: "Hours booked", value: bookedHours.toFixed(1), detail: "This calendar month", icon: "clock" as const, tone: "green" as const },
-    { label: "Published links", value: String(activeEvents.length), detail: `${eventTypes.length} total event types`, icon: "event-types" as const, tone: "amber" as const },
+    { label: "Published links", value: String(activeEvents.length), detail: `${eventTypes.length} total services`, icon: "event-types" as const, tone: "amber" as const },
   ];
   const publicEvent = activeEvents[0];
-  if (loading) return <div className="page-stack"><PageHeader title="Scheduling overview" /><div className="sync-note" role="status"><span className="spinner" />Loading dashboard…</div></div>;
-  if (error) return <div className="page-stack"><PageHeader title="Scheduling overview" /><section className="panel error-state" role="alert"><span><Icon name="x" /></span><h2>Dashboard did not load</h2><p>{error}</p><button className="button button-primary" type="button" onClick={() => { setLoading(true); setError(""); void load(); }}>Retry</button></section></div>;
+  if (loading) return <div className="page-stack"><PageHeader title="Studio overview" /><div className="sync-note" role="status"><span className="spinner" />Loading dashboard…</div></div>;
+  if (error) return <div className="page-stack"><PageHeader title="Studio overview" /><section className="panel error-state" role="alert"><span><Icon name="x" /></span><h2>Dashboard did not load</h2><p>{error}</p><button className="button button-primary" type="button" onClick={() => { setLoading(true); setError(""); void load(); }}>Retry</button></section></div>;
   return (
     <div className="page-stack">
-      <PageHeader title="Scheduling overview" description={`Bookings shown in ${workspaceTimeZone}.`} actions={canManage ? <ButtonLink href="/event-types/new" icon="plus">Create event type</ButtonLink> : undefined} />
+      <PageHeader title="Studio overview" description={`Bookings shown in ${workspaceTimeZone}.`} actions={canManage ? <ButtonLink href="/event-types/new" icon="plus">Create service</ButtonLink> : undefined} />
       <section className="metric-grid" aria-label="Booking overview">
         {metrics.map((metric) => <Metric key={metric.label} {...metric} />)}
       </section>
       <div className="dashboard-grid">
         <section className="panel upcoming-panel">
-          <SectionHeader title="Upcoming bookings" description="Your next confirmed and pending meetings" action={<Link className="text-link" href="/bookings">View all <Icon name="arrow-right" size={14} /></Link>} />
+          <SectionHeader title="Upcoming bookings" description="Who is coming in next" action={<Link className="text-link" href="/bookings">View all <Icon name="arrow-right" size={14} /></Link>} />
           <div className="booking-list">
             {upcoming.map((booking) => (
               <Link href={`/bookings?selected=${booking.id}`} className="booking-row" key={booking.id}>
@@ -61,18 +61,18 @@ export function DashboardView() {
         <aside className="panel quick-panel">
           <SectionHeader title="Quick actions" />
           <div className="quick-actions">
-            {canManage && <Link href="/event-types/new"><span className="quick-icon"><Icon name="plus" /></span><div><strong>New event type</strong><small>Create a booking experience</small></div><Icon name="arrow-right" /></Link>}
+            {canManage && <Link href="/event-types/new"><span className="quick-icon"><Icon name="plus" /></span><div><strong>New service</strong><small>Create a booking experience</small></div><Icon name="arrow-right" /></Link>}
             {canManage && <Link href="/availability"><span className="quick-icon"><Icon name="availability" /></span><div><strong>Update availability</strong><small>Adjust your working hours</small></div><Icon name="arrow-right" /></Link>}
-            {publicEvent && <Link href={`/book/${publicEvent.slug}`}><span className="quick-icon"><Icon name="link" /></span><div><strong>Share a booking link</strong><small>Preview the invitee flow</small></div><Icon name="arrow-right" /></Link>}
+            {publicEvent && <Link href={`/book/${publicEvent.slug}`}><span className="quick-icon"><Icon name="link" /></span><div><strong>Share a booking link</strong><small>Preview the client flow</small></div><Icon name="arrow-right" /></Link>}
           </div>
         </aside>
       </div>
       <section className="panel event-summary-panel">
-        <SectionHeader title="Active event types" description="The links currently accepting bookings" action={canManage ? <Link className="text-link" href="/event-types">Manage event types <Icon name="arrow-right" size={14} /></Link> : undefined} />
+        <SectionHeader title="Active services" description="The links currently accepting bookings" action={canManage ? <Link className="text-link" href="/event-types">Manage services <Icon name="arrow-right" size={14} /></Link> : undefined} />
         <div className="event-summary-grid">
           {activeEvents.map((event) => <Link href={canManage ? `/event-types/${event.id}` : `/book/${event.slug}`} className="event-summary" key={event.id}><span className="event-color" style={{ background: event.color }} /><div><strong>{event.title}</strong><span>{event.durations.map((item) => item.label).join(" · ")} · {event.location}</span></div></Link>)}
         </div>
-        {activeEvents.length === 0 && <EmptyState icon="event-types" title="No published event types" description={canManage ? "Publish an event type to create a public booking link." : "No public booking links are currently available."} action={canManage ? <ButtonLink href="/event-types/new">Create event type</ButtonLink> : undefined} />}
+        {activeEvents.length === 0 && <EmptyState icon="event-types" title="No published services" description={canManage ? "Publish an service to create a public booking link." : "No public booking links are currently available."} action={canManage ? <ButtonLink href="/event-types/new">Create service</ButtonLink> : undefined} />}
       </section>
     </div>
   );

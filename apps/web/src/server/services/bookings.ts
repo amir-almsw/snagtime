@@ -5,18 +5,23 @@ import { capabilityRows, materializeCapabilities, newCapabilityIdentity } from "
 import { db } from "@/server/db";
 import { AppError, conflict, notFound } from "@/server/errors";
 import { mapBooking } from "@/server/mappers";
-import { generateSlots, getAvailability } from "@/server/services/availability";
+import { generateSlots, getAvailability, type BusyInterval } from "@/server/services/availability";
 import { getCalendarService, providerCalendarEventId, type CalendarService } from "@/server/services/calendar";
 import { getEventTypeBySlug, getEventTypeForSlotsBySlug } from "@/server/services/event-types";
 import { currentDatabaseContext, enterDatabaseAction, enterDatabaseContext, enterPublicBookingDatabaseContext, enterPublicDatabaseContext } from "@/server/db-context";
 import { processBookingOutbox } from "@/server/services/outbox";
 import { shouldDrainOutboxInline } from "@/server/services/outbox-dispatch";
 import { getPaymentService, type PaymentService } from "@/server/services/payments";
-import { enqueueBookingEmail } from "@/server/services/notifications";
+import { enqueueBookingEmail, enqueueBookingReminder, supersedeBookingReminders } from "@/server/services/notifications";
 import { boundedPrismaTransactionOptions, withDatabaseTransactionRetry } from "@/server/database-retry";
+import { generateBookingReference } from "@/server/services/booking-reference";
+import { structuredLog } from "@/server/observability";
 
 const activeStatuses = ["CONFIRMED", "PENDING_PAYMENT"];
 function providerErrorCode(error: unknown) { return typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code || "") : ""; }
+// SQLite reports the constraint name ("Booking_reference_key") and PostgreSQL the field list, so this
+// flattens both to one string the caller can substring-match rather than comparing shapes.
+function providerErrorTarget(error: unknown) { const meta = typeof error === "object" && error !== null && "meta" in error ? (error as { meta?: { target?: unknown } }).meta : undefined; return String(meta?.target ?? ""); }
 const MAX_VALIDATED_BOOKING_BUFFER_MINUTES = 240;
 const bookingInclude = { eventType: { select: { name: true } }, host: { select: { name: true } }, answers: true } as const;
 export type InternalCreateBookingResult = { booking: ReturnType<typeof mapBooking>; checkoutUrl: string | null; checkoutState: CreateBookingResult["checkoutState"]; manageCapabilities: BookingManageCapabilities | null };
@@ -46,42 +51,66 @@ export async function listManageRescheduleSlots(id: string, from: Date, to: Date
   return slots.filter((slot) => new Date(slot.start).getTime() !== booking.startAt.getTime());
 }
 
+// The host's booked time is read from the database on every slot request, so a confirmed appointment
+// leaves the booking page immediately, before any calendar mirror catches up. In production no public
+// policy exposes another client's Booking row, so the read goes through the tempocove_public_host_busy
+// definer function, which returns only buffered (start, end) ranges for the event's host and never a
+// row: client names and emails stay off the public surface. SQLite has no RLS and reads the rows.
+export async function hostBookedIntervals(eventType: { id: string; workspaceId: string; ownerId: string }, from: Date, to: Date, excludeBookingId?: string): Promise<BusyInterval[]> {
+  if (process.env.DATABASE_PROVIDER === "postgresql" && process.env.NODE_ENV === "production") {
+    const rows = await db.$queryRawUnsafe<Array<{ busy_start: Date | string; busy_end: Date | string }>>("SELECT busy_start,busy_end FROM tempocove_public_host_busy($1::text,$2::timestamp,$3::timestamp,$4::text)", eventType.id, from.toISOString(), to.toISOString(), excludeBookingId ?? "");
+    return rows.map((row) => ({ start: new Date(row.busy_start), end: new Date(row.busy_end) }));
+  }
+  const rangeStart = DateTime.fromJSDate(from).minus({ minutes: MAX_VALIDATED_BOOKING_BUFFER_MINUTES }).toJSDate();
+  const rangeEnd = DateTime.fromJSDate(to).plus({ minutes: MAX_VALIDATED_BOOKING_BUFFER_MINUTES }).toJSDate();
+  const bookings = await db.booking.findMany({
+    where: { id: excludeBookingId ? { not: excludeBookingId } : undefined, workspaceId: eventType.workspaceId, hostId: eventType.ownerId, status: { in: activeStatuses }, startAt: { lt: rangeEnd }, endAt: { gt: rangeStart } },
+    select: { startAt: true, endAt: true, bufferBeforeMinutes: true, bufferAfterMinutes: true },
+  });
+  return bookings.map((item) => ({ start: DateTime.fromJSDate(item.startAt).minus({ minutes: item.bufferBeforeMinutes }).toJSDate(), end: DateTime.fromJSDate(item.endAt).plus({ minutes: item.bufferAfterMinutes }).toJSDate() }));
+}
+
 export async function listPublicSlots(slug: string, from: Date, to: Date, outputTimeZone: string, calendar: CalendarService = getCalendarService(), durationId?: string, excludeBookingId?: string, allowInactiveDuration = false, allowInactiveEvent = false, excludeProviderEventId?: string, bookingWindowDaysOverride?: number, durationMinutesOverride?: number, bufferBeforeOverride?: number, bufferAfterOverride?: number, busyProviderOverride?: "google" | "local") {
   const eventType = await getEventTypeForSlotsBySlug(slug, !allowInactiveEvent);
+  // getEventTypeForSlotsBySlug enters a slug-only context before its first await -- which does reach us,
+  // replacing whatever the caller had -- and then re-enters the full one after that await, where it is
+  // discarded the moment it returns (see db-context.ts). So without this line we resume holding a context
+  // whose workspace id is empty, and tempocove_public_host_busy below, which matches the event on
+  // e."workspaceId"=current_setting('tempocove.workspace_id'), finds nothing. It returns zero rows rather
+  // than an error, so every booked slot silently stayed on the public list. Entered in this function's own
+  // frame so hostBookedIntervals and the duration lookup below both see it.
+  enterPublicDatabaseContext(slug, eventType.workspaceId, eventType.id);
   const duration = (durationId ? eventType.durations.find((item) => item.id === durationId) : eventType.durations.find((item) => item.isDefault))
     ?? (durationId && allowInactiveDuration ? await db.eventDuration.findFirst({ where: { id: durationId, eventTypeId: eventType.id } }) : null);
   if (!duration) throw notFound("Duration option");
   const effectiveBufferBefore = bufferBeforeOverride ?? eventType.bufferBeforeMinutes; const effectiveBufferAfter = bufferAfterOverride ?? eventType.bufferAfterMinutes;
   const providerFrom = DateTime.fromJSDate(from).minus({ minutes: effectiveBufferBefore }).toJSDate();
   const providerTo = DateTime.fromJSDate(to).plus({ minutes: effectiveBufferAfter }).toJSDate();
-  const providerBusyRequest = async () => {
+  const providerBusyRequest = async (): Promise<BusyInterval[]> => {
     // Promise branches get their own signed public context so another contextual
     // Prisma transaction cannot leave provider readiness workspace-less.
     enterPublicDatabaseContext(slug, eventType.workspaceId, eventType.id);
-    return (excludeProviderEventId || busyProviderOverride) && calendar.getBusyIntervalsExcludingEvent
-      ? calendar.getBusyIntervalsExcludingEvent(eventType.ownerId, providerFrom, providerTo, excludeProviderEventId ?? "__tempocove_no_excluded_event__", busyProviderOverride, eventType.workspaceId)
-      : calendar.getBusyIntervals(eventType.ownerId, providerFrom, providerTo, eventType.workspaceId);
+    try {
+      return await ((excludeProviderEventId || busyProviderOverride) && calendar.getBusyIntervalsExcludingEvent
+        ? calendar.getBusyIntervalsExcludingEvent(eventType.ownerId, providerFrom, providerTo, excludeProviderEventId ?? "__tempocove_no_excluded_event__", busyProviderOverride, eventType.workspaceId)
+        : calendar.getBusyIntervals(eventType.ownerId, providerFrom, providerTo, eventType.workspaceId));
+    } catch (error) {
+      // The database is the authority for the schedule and for booked time. Provider busy time only adds
+      // blocks the host typed straight into Google Calendar, so a provider failure is logged and the slots
+      // are served from the database rather than taking the booking page down with it.
+      structuredLog("warn", { event: "provider_busy_unavailable", kind: "public_slots", code: providerErrorCode(error) || (error instanceof Error ? error.message : "UNKNOWN") });
+      return [];
+    }
   };
-  const bookingRangeStart = DateTime.fromJSDate(from).minus({ minutes: effectiveBufferBefore + MAX_VALIDATED_BOOKING_BUFFER_MINUTES }).toJSDate();
-  const bookingRangeEnd = DateTime.fromJSDate(to).plus({ minutes: effectiveBufferAfter + MAX_VALIDATED_BOOKING_BUFFER_MINUTES }).toJSDate();
-  const [schedule, bookings, providerBusy] = await Promise.all([
+  const [schedule, booked, providerBusy] = await Promise.all([
     getAvailability(eventType.workspaceId, eventType.ownerId, eventType.owner.timeZone, { from, to }),
-    db.booking.findMany({
-      where: { id: excludeBookingId ? { not: excludeBookingId } : undefined, workspaceId: eventType.workspaceId, hostId: eventType.ownerId, status: { in: activeStatuses }, startAt: { lt: bookingRangeEnd }, endAt: { gt: bookingRangeStart } },
-      select: { startAt: true, endAt: true, bufferBeforeMinutes: true, bufferAfterMinutes: true },
-    }),
+    hostBookedIntervals(eventType, providerFrom, providerTo, excludeBookingId),
     providerBusyRequest(),
   ]);
   return generateSlots({
     eventType: { ...eventType, bookingWindowDays: bookingWindowDaysOverride ?? eventType.bookingWindowDays, durationId: duration.id, durationMinutes: durationMinutesOverride ?? duration.durationMinutes, bufferBeforeMinutes: effectiveBufferBefore, bufferAfterMinutes: effectiveBufferAfter, priceCents: duration.priceCents, currency: duration.currency },
     schedule,
-    busy: [
-      ...bookings.map((item) => ({
-        start: DateTime.fromJSDate(item.startAt).minus({ minutes: item.bufferBeforeMinutes }).toJSDate(),
-        end: DateTime.fromJSDate(item.endAt).plus({ minutes: item.bufferAfterMinutes }).toJSDate(),
-      })),
-      ...providerBusy,
-    ],
+    busy: [...booked, ...providerBusy],
     from, to, outputTimeZone,
   });
 }
@@ -102,6 +131,28 @@ async function priorResult(slug: string, idempotencyKey: string, requestFingerpr
   return { booking: mapBooking(prior), checkoutUrl: prior.stripeCheckoutUrl, checkoutState: prior.priceCents === 0 ? "NOT_REQUIRED" : prior.stripeCheckoutUrl ? "READY" : "RETRY_REQUIRED", manageCapabilities: activeCapabilities === 3 ? materializeCapabilities(prior.id, prior.capabilityVersion, prior.manageExpiresAt, prior.capabilityKeyId) : null };
 }
 
+// One live appointment per client, keyed on the email they book with. The booking id travels on the
+// error so the caller can decide whether the requester has proved it is theirs before revealing it.
+export const ACTIVE_BOOKING_EXISTS = "ACTIVE_BOOKING_EXISTS";
+export function activeBookingConflict(bookingId: string) {
+  const error = new AppError(ACTIVE_BOOKING_EXISTS, "You already have an appointment booked with us. Reschedule that one instead of booking a second.", 409);
+  (error as AppError & { bookingId?: string }).bookingId = bookingId;
+  return error;
+}
+export async function activeBookingIdForEmail(workspaceId: string, email: string) {
+  // No public RLS policy exposes a Booking row by invitee email, so production asks a definer
+  // function that returns only the id. A plain query here would read empty in production.
+  if (process.env.DATABASE_PROVIDER === "postgresql" && process.env.NODE_ENV === "production") {
+    const rows = await db.$queryRawUnsafe<Array<{ id: string | null }>>("SELECT tempocove_active_booking_for_email($1::text) AS id", email);
+    return rows[0]?.id ?? null;
+  }
+  const row = await db.booking.findFirst({
+    where: { workspaceId, inviteeEmail: email.toLowerCase(), status: { in: activeStatuses }, endAt: { gt: new Date() } },
+    orderBy: { startAt: "asc" }, select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
 async function ensureCheckoutLinked(bookingId: string, payments: PaymentService) {
   const booking = await db.booking.findUniqueOrThrow({ where: { id: bookingId }, include: { eventType: true } });
   if (!booking.priceCents || booking.stripeCheckoutSessionId) return booking.stripeCheckoutUrl;
@@ -117,9 +168,16 @@ async function ensureCheckoutLinked(bookingId: string, payments: PaymentService)
   return (await db.booking.findUniqueOrThrow({ where: { id: booking.id } })).stripeCheckoutUrl;
 }
 
+// The one-live-appointment rule stops an anonymous client from quietly holding two chairs. The studio
+// booking from its own dashboard is the authority over its own calendar, so it books a regular's next
+// appointment while the current one is still ahead of them. Every other guard -- the slot has to be
+// genuinely free, the answers valid, the buffers honoured -- applies unchanged.
+export type CreateBookingOptions = { allowSecondActiveBooking?: boolean };
+
 export async function createBooking(
   slug: string, input: CreateBookingInput, idempotencyKey: string,
   calendar: CalendarService = getCalendarService(), payments: PaymentService = getPaymentService(),
+  options: CreateBookingOptions = {},
 ): Promise<InternalCreateBookingResult> {
   const requestFingerprint = createHash("sha256").update(JSON.stringify({ slug, ...input })).digest("hex");
   const eventType = await withDatabaseTransactionRetry(() => getEventTypeBySlug(slug));
@@ -132,6 +190,8 @@ export async function createBooking(
     }
     return prior;
   }
+  const existing = options.allowSecondActiveBooking ? null : await withDatabaseTransactionRetry(() => activeBookingIdForEmail(eventType.workspaceId, input.inviteeEmail));
+  if (existing) throw activeBookingConflict(existing);
   const duration = input.durationId ? eventType.durations.find((item) => item.id === input.durationId) : eventType.durations.find((item) => item.isDefault);
   if (!duration) throw notFound("Duration option");
   const answerMap = new Map((input.answers ?? []).map((answer) => [answer.questionId, answer.value]));
@@ -155,9 +215,14 @@ export async function createBooking(
   const capability = newCapabilityIdentity(requestedEnd);
   const calendarProviderSnapshot = await calendar.providerKind?.(eventType.ownerId, eventType.workspaceId) ?? "local";
   let created;
+  // A duplicate reference is a coin landing twice, not anything the client can act on. Minting a fresh
+  // code and retrying keeps it invisible; falling through to the P2002 branch below would tell them
+  // their slot was taken, which is both wrong and unactionable.
+  for (let attempt = 0; ; attempt += 1) {
   try {
     created = await withDatabaseTransactionRetry((remainingMs) => db.$transaction(async (tx) => {
       const booking = await tx.booking.create({ data: {
+        reference: generateBookingReference(),
         workspaceId: eventType.workspaceId, eventTypeId: eventType.id, hostId: eventType.ownerId, durationId: duration.id,
         durationMinutes: duration.durationMinutes, priceCents: duration.priceCents, currency: duration.currency,
         bufferBeforeMinutes: eventType.bufferBeforeMinutes, bufferAfterMinutes: eventType.bufferAfterMinutes,
@@ -167,23 +232,25 @@ export async function createBooking(
         eventTitleSnapshot: eventType.name, locationTypeSnapshot: eventType.locationType,
         locationValueSnapshot: eventType.locationValue, calendarProviderSnapshot,
         idempotencyKey, requestFingerprint, capabilityVersion: capability.version, capabilityKeyId: capability.keyId, manageExpiresAt: capability.expiresAt,
-        status: duration.priceCents > 0 ? "PENDING_PAYMENT" : "CONFIRMED",
-        checkoutResumeExpiresAt: duration.priceCents > 0 ? new Date(Date.now() + 24 * 60 * 60_000) : null,
-        calendarSyncStatus: duration.priceCents > 0 ? "LOCAL" : "PENDING",
-        notificationStatus: duration.priceCents > 0 ? "LOCAL_NO_EMAIL" : "PENDING",
+        status: "CONFIRMED",
+        checkoutResumeExpiresAt: null,
+        calendarSyncStatus: "PENDING",
+        notificationStatus: "PENDING",
         answers: { create: eventType.questions.filter((item) => answerMap.has(item.id)).map((item) => ({ questionId: item.id, questionLabel: item.label, valueJson: JSON.stringify(answerMap.get(item.id)) })) },
       } });
       await tx.bookingOccupancy.createMany({ data: occupiedMinutes(requestedStart, requestedEnd, eventType.bufferBeforeMinutes, eventType.bufferAfterMinutes).map((minuteStart) => ({ workspaceId: eventType.workspaceId, bookingId: booking.id, hostId: eventType.ownerId, minuteStart })) });
       await tx.bookingCapability.createMany({ data: capabilityRows(booking.id, capability.version, capability.expiresAt, capability.keyId) });
-      if (!duration.priceCents) {
-        await tx.integrationOutbox.create({ data: { workspaceId: eventType.workspaceId, bookingId: booking.id, kind: "CALENDAR_CREATE", idempotencyKey: `calendar:create:${booking.id}:free` } });
-        await enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED");
-      }
+      // Prices are display-only (settled at the shop), so every booking confirms immediately.
+      await tx.integrationOutbox.create({ data: { workspaceId: eventType.workspaceId, bookingId: booking.id, kind: "CALENDAR_CREATE", idempotencyKey: `calendar:create:${booking.id}:free` } });
+      await enqueueBookingEmail(tx, booking, "BOOKING_CONFIRMED");
+      await enqueueBookingReminder(tx, booking);
       return tx.booking.findUniqueOrThrow({ where: { id: booking.id }, include: bookingInclude });
     }, boundedPrismaTransactionOptions(remainingMs)));
+    break;
   } catch (error) {
     // SQLite and PostgreSQL use separately generated Prisma clients, so
     // cross-client `instanceof` is not a valid production error discriminator.
+    if (providerErrorCode(error) === "P2002" && providerErrorTarget(error).includes("reference") && attempt < 3) continue;
     if (providerErrorCode(error) === "P2002") {
       const winner = await withDatabaseTransactionRetry(() => priorResult(slug, idempotencyKey, requestFingerprint));
       if (winner) return winner;
@@ -191,17 +258,9 @@ export async function createBooking(
     }
     throw error;
   }
-  let checkoutUrl: string | null = null;
-  let checkoutState: InternalCreateBookingResult["checkoutState"] = created.priceCents > 0 ? "RETRY_REQUIRED" : "NOT_REQUIRED";
-  if (created.priceCents > 0) {
-    try {
-      checkoutUrl = await ensureCheckoutLinked(created.id, payments);
-      checkoutState = checkoutUrl ? "READY" : "RETRY_REQUIRED";
-    } catch {
-      await db.booking.update({ where: { id: created.id }, data: { stripePaymentStatus: "checkout_retry" } });
-    }
-  } else if (shouldDrainOutboxInline()) await processBookingOutbox(created.id);
-  return { booking: mapBooking(created), checkoutUrl, checkoutState, manageCapabilities: materializeCapabilities(created.id, capability.version, capability.expiresAt, capability.keyId) };
+  }
+  if (shouldDrainOutboxInline()) await processBookingOutbox(created.id);
+  return { booking: mapBooking(created), checkoutUrl: null, checkoutState: "NOT_REQUIRED", manageCapabilities: materializeCapabilities(created.id, capability.version, capability.expiresAt, capability.keyId) };
 }
 
 export async function resumeBookingCheckout(id: string, payments: PaymentService = getPaymentService()): Promise<ResumeBookingCheckoutResult> {
@@ -237,6 +296,7 @@ export async function cancelBooking(id: string, cancellationReason?: string) {
       await tx.integrationOutbox.upsert({ where: { idempotencyKey: `stripe:refund:${id}:full:v1` }, update: {}, create: { workspaceId: result.workspaceId, bookingId: id, kind: "STRIPE_REFUND", idempotencyKey: `stripe:refund:${id}:full:v1` } });
     } else if (result.stripeCheckoutSessionId) await tx.integrationOutbox.upsert({ where: { idempotencyKey: `stripe:expire:${id}` }, update: {}, create: { workspaceId: result.workspaceId, bookingId: id, kind: "STRIPE_EXPIRE", idempotencyKey: `stripe:expire:${id}` } });
     const finalResult = await tx.booking.findUniqueOrThrow({ where: { id }, include: bookingInclude });
+    await supersedeBookingReminders(tx, id, mutationNow);
     await enqueueBookingEmail(tx, finalResult, "BOOKING_CANCELLED", mutationNow); return finalResult;
   });
   if (shouldDrainOutboxInline()) await processBookingOutbox(id);
@@ -270,7 +330,9 @@ export async function rescheduleBooking(id: string, startAt: string, calendar: C
       await tx.bookingManageSession.updateMany({ where: { bookingId: id, revokedAt: null }, data: { expiresAt: renewedManageExpiry } });
       await tx.integrationOutbox.create({ data: { workspaceId: booking.workspaceId, bookingId: id, kind: "CALENDAR_UPDATE", bookingMutationVersion: booking.mutationVersion + 1, idempotencyKey: `calendar:update:${id}:${requestedStart.toISOString()}` } });
       const result = await tx.booking.findUniqueOrThrow({ where: { id }, include: bookingInclude });
-      await enqueueBookingEmail(tx, result, "BOOKING_RESCHEDULED", mutationNow); return result;
+      await supersedeBookingReminders(tx, id, mutationNow);
+      await enqueueBookingEmail(tx, result, "BOOKING_RESCHEDULED", mutationNow);
+      await enqueueBookingReminder(tx, result, mutationNow); return result;
     });
   } catch (error) {
     if (providerErrorCode(error) === "P2002") throw conflict("That time was just booked. Choose another slot.");

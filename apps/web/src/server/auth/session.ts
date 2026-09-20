@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import type { Membership, User, Workspace } from "@prisma/client";
 import { db } from "@/server/db";
 import { AppError, unauthorized } from "@/server/errors";
-import { enterDatabaseContext } from "@/server/db-context";
+import { enterDatabaseContext, updateDatabaseContext } from "@/server/db-context";
 import { systemEmailIdentity } from "@/server/email-config";
 
 export const SESSION_COOKIE = "tempocove_session";
@@ -79,7 +79,10 @@ export async function getSessionRecord(request: Request) {
     where: { tokenHash, userId: session.userId, revokedAt: null, expiresAt: { gt: new Date() }, membership: { status: "ACTIVE", userId: session.userId } },
     include: { user: true, membership: true, workspace: true },
   });
-  if (record) enterDatabaseContext({ mode: "workspace", workspaceId: record.activeWorkspaceId, userId: record.userId, sessionHash: tokenHash, subject: record.membership.role,action:"workspace_read" });
+  // Refines the session context entered above rather than replacing it: this runs after an await,
+  // where enterWith would be discarded the moment this function returns, leaving every workspace
+  // route with an empty tempocove.workspace_id and so no RLS access to its own tenant.
+  if (record) updateDatabaseContext({ mode: "workspace", workspaceId: record.activeWorkspaceId, userId: record.userId, sessionHash: tokenHash, subject: record.membership.role,action:"workspace_read" });
   return record || null;
 }
 
@@ -171,9 +174,11 @@ export function assertProductionRuntimeSecurity() {
   if (process.env.OUTBOX_WORKER_MODE !== "dedicated") throw new Error("Production requires a dedicated outbox worker.");
   if (databaseRole === "app" && (process.env.TRUST_PROXY !== "true" || Buffer.byteLength(process.env.PROXY_SHARED_SECRET || "") < 32)) throw new Error("Production requires authenticated trusted-proxy ingress with a strong PROXY_SHARED_SECRET.");
   if (databaseRole === "app" && Buffer.byteLength(process.env.OPERATOR_HEALTH_SECRET || "") < 32) throw new Error("Production requires a strong OPERATOR_HEALTH_SECRET.");
-  if (process.env.DEMO_MODE === "true" || process.env.PAYMENTS_PROVIDER !== "stripe" || process.env.CALENDAR_PROVIDER !== "google") throw new Error("Production forbids demo/local provider fallbacks.");
+  if (databaseRole === "app" && (!/^scrypt:v1:/.test(process.env.CLIENT_GATE_PASSWORD_HASH || "") || Buffer.byteLength(process.env.CLIENT_GATE_SECRET || "") < 32 || process.env.CLIENT_GATE_SECRET === (process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET))) throw new Error("Production requires an independent CLIENT_GATE_SECRET and a scrypt:v1 CLIENT_GATE_PASSWORD_HASH.");
+  if (databaseRole === "app" && !["book","admin"].includes(process.env.SURFACE || "")) throw new Error("Production requires SURFACE=book or SURFACE=admin so origin isolation cannot be silently disabled.");
+  if (process.env.DEMO_MODE === "true" || process.env.CALENDAR_PROVIDER !== "google") throw new Error("Production forbids demo/local provider fallbacks.");
+  if (process.env.PAYMENTS_PROVIDER !== "stub") throw new Error("Payments are removed from this deployment; production requires PAYMENTS_PROVIDER=stub.");
   if (!process.env.GOOGLE_CLIENT_ID?.endsWith(".apps.googleusercontent.com") || Buffer.byteLength(process.env.GOOGLE_CLIENT_SECRET || "") < 16) throw new Error("Production Google OAuth configuration is incomplete.");
-  if (!process.env.STRIPE_SECRET_KEY?.startsWith("sk_test_") || (databaseRole === "app" && !process.env.STRIPE_WEBHOOK_SECRET?.startsWith("whsec_"))) throw new Error("Production payment provider configuration is incomplete or not test-isolated.");
   if (process.env.EMAIL_PROVIDER !== "smtp" || !["implicit","starttls"].includes(process.env.SMTP_TLS_MODE || "") || ["EMAIL_TOKEN_SECRET","SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASSWORD","EMAIL_FROM","EMAIL_REPLY_TO","EMAIL_SENDER_DOMAIN"].some((name) => !process.env[name])) throw new Error("Production requires complete TLS SMTP, system sender identity, and EMAIL_TOKEN_SECRET configuration.");
   systemEmailIdentity();
   if (Buffer.byteLength(process.env.EMAIL_TOKEN_SECRET || "") < 32) throw new Error("Production requires EMAIL_TOKEN_SECRET with at least 32 bytes.");

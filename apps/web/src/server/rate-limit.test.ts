@@ -4,6 +4,7 @@ import { GET as getPublicEvent } from "@/app/api/public/[slug]/route";
 import { GET as getManagedBooking } from "@/app/api/bookings/[id]/route";
 import { GET as getManagedSlots } from "@/app/api/bookings/[id]/slots/route";
 import { manageCookieName } from "@/server/auth/capabilities";
+import { createGateToken, gateCookieName } from "@/server/auth/client-gate";
 
 describe("POC rate limiting", () => {
   beforeEach(resetRateLimitsForTest);
@@ -33,9 +34,16 @@ describe("POC rate limiting", () => {
     expect(rateLimitCounterCountForTest()).toBe(rateLimitMaximumCountersForTest);
   });
   it("rejects public event reads before resolving a slug after the coarse IP budget",async()=>{
-    for(let index=0;index<120;index+=1)await enforceRateLimit("public-event:ip:anonymous-local",120,60_000);
+    process.env.CLIENT_GATE_SECRET="client-gate-test-secret-that-is-at-least-32-bytes";
+    try{
+      for(let index=0;index<120;index+=1)await enforceRateLimit("public-event:ip:anonymous-local",120,60_000);
+      const response=await getPublicEvent(new Request("http://localhost:3000/api/public/not-resolved",{headers:{cookie:`${gateCookieName()}=${createGateToken()}`}}),{params:Promise.resolve({slug:"not-resolved"})});
+      expect(response.status).toBe(429);expect(await response.json()).toEqual({error:{code:"RATE_LIMITED",message:"Too many requests. Try again shortly."}});
+    }finally{delete process.env.CLIENT_GATE_SECRET;}
+  });
+  it("rejects ungated public event reads before consuming the coarse IP budget",async()=>{
     const response=await getPublicEvent(new Request("http://localhost:3000/api/public/not-resolved"),{params:Promise.resolve({slug:"not-resolved"})});
-    expect(response.status).toBe(429);expect(await response.json()).toEqual({error:{code:"RATE_LIMITED",message:"Too many requests. Try again shortly."}});
+    expect(response.status).toBe(401);expect(((await response.json()) as {error:{code:string}}).error.code).toBe("CLIENT_GATE_REQUIRED");
   });
   it("shares one coarse IP budget across invalid manage detail and slot authorization",async()=>{
     for(let index=0;index<240;index+=1)await enforceRateLimit("manage-attempt:ip:anonymous-local",240,60_000);

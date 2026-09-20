@@ -19,6 +19,7 @@ const eventTypeObject = z.object({
   bufferAfterMinutes: z.number().int().min(0).max(240),
   minimumNoticeMinutes: z.number().int().min(0).max(10080),
   bookingWindowDays: z.number().int().min(1).max(365),
+  // Prices are display-only: clients see them and settle at the studio, so nothing here reaches a payment provider.
   priceCents: z.number().int().min(0).max(10_000_000),
   currency: z.string().trim().toLowerCase().regex(/^[a-z]{3}$/),
   durations: z.array(z.object({
@@ -90,7 +91,13 @@ export const bookingInput = z.object({
   answers: z.array(z.object({ questionId: z.string().min(1).max(100), value: z.unknown() })).max(20).optional(),
 });
 
+// The organizer books on behalf of a client from the dashboard. Same shape as a public booking plus
+// the event type, which is resolved inside the caller's own workspace before the slug reaches
+// createBooking -- a globally unique slug must never let one workspace book into another's calendar.
+export const hostBookingInput = bookingInput.extend({ eventTypeId: z.string().min(1).max(100) });
+
 export const demoLoginInput = z.object({ email: z.email().transform((value) => value.toLowerCase()), password: z.string().min(1).max(200) });
+export const clientGateInput = z.object({ password: z.string().min(1).max(200) }).strict();
 const strongPassword = z.string().min(12).max(200).refine((value) => /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value) && /[^A-Za-z0-9]/.test(value), "Use upper, lower, number, and symbol.");
 export const registrationInput = z.object({
   name: z.string().trim().min(2).max(100), email: z.email().transform((value) => value.trim().toLowerCase()),
@@ -104,6 +111,13 @@ export const genericEmailInput = z.object({ email: z.email().transform((value) =
 export const tokenInput = z.object({ token: z.string().min(40).max(500) }).strict();
 export const passwordResetInput = tokenInput.extend({ newPassword: strongPassword }).strict();
 export const bookingRecoveryRequestInput = genericEmailInput.extend({ bookingId: z.string().min(1).max(100) }).strict();
+// "Manage my appointment" takes a reference or an address, never both and never neither. Lengths are
+// bounded here so nothing unbounded reaches the lookup; the reference's shape is checked by
+// normalizeBookingReference, which returns "" for anything that could not be one.
+export const bookingManageLookupInput = z.object({
+  reference: z.string().trim().max(40).optional(),
+  email: z.string().trim().max(320).optional(),
+}).strict().refine((value) => Boolean(value.reference) !== Boolean(value.email), { message: "Enter either a booking reference or the email you booked with." });
 export const cancelBookingInput = z.object({ reason: z.string().trim().min(1).max(500).optional() }).strict();
 export const rescheduleBookingInput = cancelBookingInput.extend({ startAt: z.iso.datetime({ offset: true }) });
 export const bookingCapabilityExchangeInput = z.object({
