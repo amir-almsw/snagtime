@@ -19,10 +19,8 @@ const sourceFiles = [
   "playwright.config.ts",
   "README.md",
   "SECURITY.md",
-  "docs/AI-SETUP.md",
   "docs/DEPLOYMENT.md",
   "docs/INTEGRATION-SETUP.md",
-  "docs/SNAGTIME-BRAND.md",
   "tsconfig.base.json",
   "vitest.config.ts",
 ];
