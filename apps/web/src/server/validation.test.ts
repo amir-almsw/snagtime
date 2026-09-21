@@ -17,6 +17,12 @@ describe("public input validation", () => {
     ] })).toThrow(/full-day unavailable/);
   });
 
+  it("accepts up to a year of per-date overrides and rejects more", () => {
+    const rows = (count: number) => Array.from({ length: count }, (_, index) => ({ dateKey: new Date(Date.UTC(2026, 0, 1 + index)).toISOString().slice(0, 10), isAvailable: false }));
+    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: rows(366) })).not.toThrow();
+    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: rows(367) })).toThrow();
+  });
+
   it("normalizes invitee email and rejects malformed booking input", () => {
     const parsed = bookingInput.parse({ startAt: "2026-08-24T14:00:00.000Z", inviteeName: "Ada Lovelace", inviteeEmail: "ADA@EXAMPLE.COM", inviteeTimeZone: "UTC" });
     expect(parsed.inviteeEmail).toBe("ada@example.com");

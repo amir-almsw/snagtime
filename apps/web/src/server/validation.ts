@@ -61,7 +61,8 @@ export const availabilityInput = z.object({
     if (value.isAvailable && (value.startMinute == null || value.endMinute == null || value.endMinute <= value.startMinute)) {
       context.addIssue({ code: "custom", message: "Available overrides need a valid start and end.", path: ["startMinute"] });
     }
-  })).max(100).default([]),
+  // One row per date: a season of time off plus custom-hour days must fit, and a year is the ceiling.
+  })).max(366).default([]),
 }).superRefine((value, context) => {
   for (const day of Array.from({ length: 7 }, (_, index) => index)) {
     const intervals = value.intervals.filter((item) => item.dayOfWeek === day).sort((a, b) => a.startMinute - b.startMinute);

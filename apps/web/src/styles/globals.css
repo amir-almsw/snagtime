@@ -138,6 +138,14 @@ a:focus-visible,button:focus-visible,[role=button]:focus-visible,[role=tab]:focu
 :root[data-theme=dark] .month-day:hover,:root[data-theme=dark] .agenda-row:hover{background:#232a36}
 :root[data-theme=dark] .month-day.is-today .month-day-number{color:#0f1319}
 :root[data-theme=dark] .day-chip.is-pending{color:var(--amber)}
+
+/* Time off: a from/to range with quick picks. Each date becomes one full-day override row, and
+   consecutive dates read back as one run with a single remove button. */
+.time-off-form{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:14px}
+.time-off-form>.button{min-height:38px}
+.time-off-presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.time-off-hint{margin:8px 0 0;font-size:10px;color:var(--muted)}
+@media(max-width:540px){.time-off-form{grid-template-columns:1fr 1fr}.time-off-form>.button{grid-column:1/-1}}
 /* .booking-brand keeps a bottom margin from its sidebar origin; inside the fixed-height header that
    margin is centred with the box and pins the lockup to the top edge. */
 .public-header .booking-brand{margin-bottom:0}
