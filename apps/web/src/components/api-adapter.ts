@@ -59,7 +59,7 @@ function minutesToTime(minutes: number) {
   return `${display}:${mins.toString().padStart(2, "0")} ${suffix}`;
 }
 
-function timeToMinutes(value: string) {
+export function timeToMinutes(value: string) {
   const match = value.match(/(\d+):(\d+)\s(AM|PM)/);
   if (!match) return 540;
   let hour = Number(match[1]) % 12;
