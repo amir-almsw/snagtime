@@ -224,9 +224,17 @@ body:has(.dvision) .theme-toggle{display:none}
 }
 .dvision .outcome-eyebrow{color:var(--brand)}
 
-/* The wordmark is typographic on the site, not a glyph. */
-.dvision .brand-mark{display:none}
-.dvision .brand-name{font-size:14px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--ink)}
+/* The studio's wordmark is its logo file, white on the black ground, so every place these pages set the
+   name in type carries the image instead. Height alone sizes it; the file keeps its own proportions. */
+.dvision .studio-logo{display:block;height:22px;width:auto}
+.dvision .studio-logo.is-lg{height:30px}
+.dvision .studio-logo.is-sm{height:14px}
+.dvision .studio-logo.is-xs{height:11px;opacity:.7}
+.dvision .host-label{display:block;margin-bottom:12px}
+.dvision .booking-brand{gap:14px}
+.dvision .booking-brand span{font-family:"DM Mono",ui-monospace,SFMono-Regular,monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.dvision .confirmation-brand{gap:14px}
+.dvision .confirmation-brand strong{font-size:12px}
 
 .dvision .auth-card{background:#0C0C0C;border:1px solid var(--line);border-top:2px solid var(--brand);border-radius:0;box-shadow:none;padding:34px 30px}
 
@@ -268,9 +276,6 @@ body:has(.dvision) .theme-toggle{display:none}
 .dvision .booking-info{background:#0A0A0A;border-color:var(--line)}
 .dvision .public-link:hover,.dvision .booking-row:hover{background:#141312}
 .dvision .slot-grid button,.dvision .slot-list button{border-radius:0}
-/* The studio's own header is a wordmark, not a lettered tile. */
-.dvision .public-logo{display:none}
-.dvision .public-workspace-brand strong{font-family:Syne,Manrope,sans-serif;font-size:14px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--ink)}
 /* Native controls -- the timezone select, date pickers, scrollbars -- take their chrome from the OS
    unless the surface declares which appearance it is. Without this the select renders as a light
    control on the black ground. */

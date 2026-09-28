@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { BrandMark } from "@/components/ui";
+import { StudioLogo } from "@/components/ui";
 import { UpcomingAppointmentCard } from "@/components/upcoming-appointment-card";
 import { lastBookingCookieName } from "@/server/auth/capabilities";
 import { gateCookieName, readGateToken } from "@/server/auth/client-gate";
@@ -23,7 +23,7 @@ export default async function BookingDirectoryPage() {
   return (
     <div className="auth-page dvision">
       <main className="auth-card">
-        <BrandMark />
+        <StudioLogo size="lg" />
         <div><span className="outcome-eyebrow">Book an appointment</span><h1>What are we doing today?</h1><p>{events.length ? "Choose your service and we’ll show you what’s open." : "The book is closed right now. Check back soon, or get in touch with the studio."}</p></div>
         {lastBooking && <UpcomingAppointmentCard bookingId={lastBooking} />}
         {events.length > 0 && (

@@ -4,6 +4,11 @@ import { db } from "@/server/db";
 import { currentDatabaseContext, enterDatabaseAction, installDatabaseContext } from "@/server/db-context";
 
 export type BusyInterval = { start: Date; end: Date };
+// Slots step 45 minutes from the start of each open interval whatever the service takes: 11:00, 11:45,
+// 12:30. A 30-minute cut at 11:00 leaves 11:45 open; a 60-minute one runs past 11:45, so the next
+// bookable slot is 12:30. The step is the studio's rhythm, not the service length, and createBooking
+// and rescheduleBooking accept only starts this generator produced, so the grid holds on both paths.
+export const SLOT_INTERVAL_MINUTES = 45;
 export type SlotEventType = {
   durationId?: string;
   durationMinutes: number;
@@ -83,7 +88,7 @@ export function generateSlots({
             currency: eventType.currency ?? "eur",
           });
         }
-        cursor = cursor.plus({ minutes: 15 });
+        cursor = cursor.plus({ minutes: SLOT_INTERVAL_MINUTES });
       }
     }
     day = day.plus({ days: 1 });

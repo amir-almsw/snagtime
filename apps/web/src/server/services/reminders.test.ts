@@ -77,7 +77,7 @@ describe("appointment reminders", () => {
     } });
     try {
       await db.$transaction((tx) => enqueueBookingReminder(tx, booking, new Date()));
-      const newStart = "2099-09-16T09:00:00.000Z";
+      const newStart = "2099-09-16T09:15:00.000Z"; // 11:15 Amsterdam, on the 45-minute grid from 09:00
       await rescheduleBooking(bookingId, newStart);
       const rows = await db.emailOutbox.findMany({ where: { bookingId, kind: "BOOKING_REMINDER" }, orderBy: { createdAt: "asc" } });
       expect(rows.filter((row) => row.status === "PENDING")).toHaveLength(1);
