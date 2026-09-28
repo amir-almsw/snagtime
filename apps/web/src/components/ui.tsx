@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Icon, type IconName } from "./icons";
+import dvisionLogo from "@/assets/dvision-logo.png";
 /* eslint-disable @next/next/no-img-element -- profile images are canonical bounded data URLs returned by the account API */
 
 export function BrandMark({ compact = false }: { compact?: boolean }) {
@@ -17,6 +18,15 @@ export function BrandMark({ compact = false }: { compact?: boolean }) {
       {!compact && <span className="brand-name">Dvision Studio</span>}
     </div>
   );
+}
+
+// The studio's wordmark, white on transparent, for the client-facing pages: everywhere those pages set
+// the studio's name in type they carry this image instead. Height alone sizes it (.studio-logo in
+// globals.css); the alt text keeps the name for screen readers and for a client whose images fail.
+// Imported rather than served from public/: the standalone runtime image copies .next/static and not
+// public/, so a bundled asset reaches production and a public file would answer 404 there.
+export function StudioLogo({ size = "md" }: { size?: "xs" | "sm" | "md" | "lg" }) {
+  return <img className={`studio-logo is-${size}`} src={dvisionLogo.src} alt="Dvision Studio" width={dvisionLogo.width} height={dvisionLogo.height} decoding="async" />;
 }
 
 export function Avatar({ name, imageUrl = null, size = "md" }: { name: string; imageUrl?: string | null; size?: "sm" | "md" | "lg" }) {

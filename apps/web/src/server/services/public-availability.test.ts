@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DateTime } from "luxon";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
+import { SLOT_INTERVAL_MINUTES } from "@/server/services/availability";
 import { listPublicSlots } from "@/server/services/bookings";
 import type { CalendarService } from "@/server/services/calendar";
 
@@ -47,9 +48,10 @@ describe("public availability comes from the database", () => {
     expect(after.some((slot) => slot.start === target!.start)).toBe(false);
     expect(after.some((slot) => overlaps(slot, booking))).toBe(false);
     expect(after.length).toBe(before.length - displaced.length);
-    // The neighbours on either side of the appointment stay open.
-    expect(after.some((slot) => new Date(slot.end).getTime() === booking.startAt.getTime())).toBe(true);
-    expect(after.some((slot) => new Date(slot.start).getTime() === booking.endAt.getTime())).toBe(true);
+    // The nearest grid slots on either side that the appointment does not overlap stay open.
+    const gridSpan = Math.ceil(duration.durationMinutes / SLOT_INTERVAL_MINUTES) * SLOT_INTERVAL_MINUTES * 60_000;
+    expect(after.some((slot) => new Date(slot.start).getTime() === booking.startAt.getTime() - gridSpan)).toBe(true);
+    expect(after.some((slot) => new Date(slot.start).getTime() === booking.startAt.getTime() + gridSpan)).toBe(true);
   });
 
   it("does not hide slots for a cancelled appointment", async () => {

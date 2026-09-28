@@ -3,16 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { BookingSlot, CreateBookingInput, WorkspaceBranding } from "@/lib/contracts";
+import type { BookingSlot, CreateBookingInput } from "@/lib/contracts";
 import { SnagTimeApiError } from "@/lib/api-client";
 import type { DurationOption, EventType } from "./demo-data";
 import { frontendApi } from "./api-adapter";
 import { clearTerminalBookingAttempt, getBookingAttempt, rememberBookingAttempt } from "./booking-attempt";
-import { foregroundForBackground } from "./brand-contrast";
 import { formatEuro } from "./price-input";
 import { loadBookingWindowSlots } from "./slot-window";
 import { Icon } from "./icons";
-import { ActionButton, BrandMark, Field } from "./ui";
+import { ActionButton, Field, StudioLogo } from "./ui";
 
 type Step = "schedule" | "details" | "review";
 type SlotDay = { key: string; weekday: string; day: string; month: string; label: string };
@@ -79,11 +78,6 @@ function requiredAnswerComplete(question: EventType["questions"][number], answer
   if (!question.id) return false;
   const answer = answers[question.id];
   return typeof answer === "boolean" ? answer : typeof answer === "string" && answer.trim().length > 0;
-}
-
-function PublicBrandLogo({ branding }: { branding: WorkspaceBranding | null | undefined }) {
-  const initial = branding?.workspaceName.charAt(0).toUpperCase() || "D";
-  return <span className="public-logo" style={{ background: branding?.accentColor, color: foregroundForBackground(branding?.accentColor) }}>{branding?.logoUrl ? <span role="img" aria-label={`${branding.workspaceName} logo`} style={{ display: "block", width: "100%", height: "100%", borderRadius: "inherit", background: `#fff center / contain no-repeat url(${JSON.stringify(branding.logoUrl)})` }} /> : initial}</span>;
 }
 
 export function PublicBookingFlow({ slug, showServiceSwitch = false }: { slug: string; showServiceSwitch?: boolean }) {
@@ -230,17 +224,17 @@ export function PublicBookingFlow({ slug, showServiceSwitch = false }: { slug: s
     } finally { setSubmitting(false); }
   }
 
-  if (loadingEvent) return <div className="public-page dvision"><header className="public-header"><BrandMark /></header><main className="outcome-shell" role="status"><span className="spinner" /><p>Opening the book…</p></main></div>;
-  if (!event || !duration) return <div className="public-page dvision"><header className="public-header"><BrandMark /></header><main className="outcome-shell"><h1>This service isn’t bookable right now</h1><p>{error || "No times are set up for this service yet. Contact the studio and we’ll take care of you."}</p>{showServiceSwitch && <p><Link href="/book" className="back-link"><Icon name="arrow-left" />Choose another service</Link></p>}</main></div>;
+  if (loadingEvent) return <div className="public-page dvision"><header className="public-header"><StudioLogo /></header><main className="outcome-shell" role="status"><span className="spinner" /><p>Opening the book…</p></main></div>;
+  if (!event || !duration) return <div className="public-page dvision"><header className="public-header"><StudioLogo /></header><main className="outcome-shell"><h1>This service isn’t bookable right now</h1><p>{error || "No times are set up for this service yet. Contact the studio and we’ll take care of you."}</p>{showServiceSwitch && <p><Link href="/book" className="back-link"><Icon name="arrow-left" />Choose another service</Link></p>}</main></div>;
   const branding = event.branding;
   // A service with one duration has nothing to choose on this screen, so the chooser is not rendered and the
   // date heading takes the step focus instead; the aside already states the duration and price.
   const chooseDuration = event.durations.length > 1;
 
   return <div className="public-page dvision">
-    <header className="public-header"><div className="public-workspace-brand"><PublicBrandLogo branding={branding} /><strong>{branding?.workspaceName || "Dvision Studio"}</strong></div><div><Link className="header-manage-link" href="/manage">My appointment</Link><Icon name="globe" /><select value={timezone} onChange={(item) => { setLoadingSlots(true); resetScheduleProgress(); setTimezone(item.target.value); }} aria-label="Booking timezone">{timeZones.map((zone) => <option value={zone} key={zone}>{timeZoneLabel(zone)}</option>)}</select></div></header>
+    <header className="public-header"><div className="public-workspace-brand"><StudioLogo /></div><div><Link className="header-manage-link" href="/manage">My appointment</Link><Icon name="globe" /><select value={timezone} onChange={(item) => { setLoadingSlots(true); resetScheduleProgress(); setTimezone(item.target.value); }} aria-label="Booking timezone">{timeZones.map((zone) => <option value={zone} key={zone}>{timeZoneLabel(zone)}</option>)}</select></div></header>
     <main className="booking-shell">
-      <aside className="booking-info">{showServiceSwitch && <Link href="/book" className="back-link"><Icon name="arrow-left" />Change service</Link>}<span className="host-label">At {branding?.workspaceName || "Dvision Studio"}</span><h1>{event.title}</h1><p>{event.description}</p>{branding?.description && <p className="workspace-description">{branding.description}</p>}<div className="public-meta"><span><Icon name="clock" />{duration.label}</span><span><Icon name="video" />{event.location}</span><span><Icon name="globe" />{timeZoneLabel(timezone)}</span>{paid && <span><Icon name="sparkles" />{priceLabel(duration.price ?? 0)} · pay at the shop</span>}</div><div className="booking-safe-note"><Icon name="check" /><span>Your chair is held the moment you book. No account, no deposit.</span></div></aside>
+      <aside className="booking-info">{showServiceSwitch && <Link href="/book" className="back-link"><Icon name="arrow-left" />Change service</Link>}<span className="host-label"><StudioLogo size="sm" /></span><h1>{event.title}</h1><p>{event.description}</p>{branding?.description && <p className="workspace-description">{branding.description}</p>}<div className="public-meta"><span><Icon name="clock" />{duration.label}</span><span><Icon name="video" />{event.location}</span><span><Icon name="globe" />{timeZoneLabel(timezone)}</span>{paid && <span><Icon name="sparkles" />{priceLabel(duration.price ?? 0)} · pay at the shop</span>}</div><div className="booking-safe-note"><Icon name="check" /><span>Your chair is held the moment you book. No account, no deposit.</span></div></aside>
       <section className="booking-flow" aria-busy={step === "schedule" && loadingSlots} aria-label="Booking steps">
         <nav className="stepper" aria-label="Booking progress">
           <button type="button" className={`stepper-step ${stepClass("schedule")}`} aria-current={step === "schedule" ? "step" : undefined} aria-controls="booking-step-panel" aria-label="Time step" onClick={() => goToStep("schedule")}><i>{steps.indexOf(furthestStep) > 0 && step !== "schedule" ? <Icon name="check" size={12} /> : "1"}</i><span>Time</span></button>
@@ -262,6 +256,6 @@ export function PublicBookingFlow({ slug, showServiceSwitch = false }: { slug: s
         {step === "review" && <div className="flow-panel" id="booking-step-panel"><button type="button" className="back-link" onClick={() => goToStep("details")}><Icon name="arrow-left" />Edit details</button><div className="flow-heading"><h2 ref={stepHeadingRef} tabIndex={-1}>Review your booking</h2><p>One last look before we hold your chair.</p></div><div className="review-card"><div className="review-event"><span style={{ background: event.color }} /><div><strong>{event.title}</strong><small>{event.location}</small></div></div><dl><div><dt><Icon name="calendar" />Date</dt><dd>{selectedDay?.label}</dd></div><div><dt><Icon name="clock" />Time</dt><dd>{selectedSlotView?.time ?? ""} · {duration.label}</dd></div><div><dt><Icon name="globe" />Timezone</dt><dd>{timeZoneLabel(timezone)}</dd></div><div><dt><Icon name="team" />Name</dt><dd>{name}<small>{email}</small></dd></div>{paid && <div><dt><Icon name="sparkles" />Price</dt><dd>{priceLabel(duration.price ?? 0)}<small>Paid at the shop — no payment is taken here</small></dd></div>}</dl></div>{paid && <div className="refund-note"><strong>Payment</strong><p>Your time is confirmed as soon as you book. Payment is settled directly with the shop at your appointment.</p></div>}<ActionButton variant="primary" className="flow-next" disabled={submitting} onClick={confirm}>{submitting ? "Confirming…" : "Confirm booking"}<Icon name="arrow-right" /></ActionButton></div>}
       </section>
     </main>
-    <footer className="public-footer"><span>{branding?.footerText || "Dvision Studio"}</span><span>Your details stay private</span></footer>
+    <footer className="public-footer">{branding?.footerText ? <span>{branding.footerText}</span> : <StudioLogo size="xs" />}<span>Your details stay private</span></footer>
   </div>;
 }

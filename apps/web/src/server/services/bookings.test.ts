@@ -88,7 +88,8 @@ describe("paid booking cancellation recovery", () => {
       async getBusyIntervals() { if (!canceled) { canceled = true; await cancelBooking(bookingId, "Concurrent cancellation"); } return []; },
       async createBookingEvent() { return null; }, async updateBookingEvent() {}, async deleteBookingEvent() {},
     };
-    await expect(rescheduleBooking(bookingId, "2099-08-24T09:00:00.000Z", calendar)).rejects.toThrow(/changed while rescheduling/);
+    // 09:15Z is 11:15 Amsterdam: on the 45-minute grid from the seeded 09:00 opening, so the slot check passes.
+    await expect(rescheduleBooking(bookingId, "2099-08-24T09:15:00.000Z", calendar)).rejects.toThrow(/changed while rescheduling/);
     expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ status: "CANCELLED", mutationVersion: 1 });
     expect(await db.bookingOccupancy.count({ where: { bookingId } })).toBe(0);
     await db.booking.delete({ where: { id: bookingId } });
@@ -151,10 +152,10 @@ describe("paid booking cancellation recovery", () => {
     const call = (startAt: string) => patchBooking(new Request(`http://localhost:3000/api/bookings/${bookingId}`, { method: "PATCH", headers: { origin: "http://localhost:3000", cookie: `${manageCookieName(bookingId)}=${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify({ startAt }) }), { params: Promise.resolve({ id: bookingId }) });
     expect((await getManageSlots(new Request(`http://localhost:3000/api/bookings/${bookingId}/slots?from=2099-08-24T00:00:00Z&to=2099-08-25T00:00:00Z&timeZone=Not/AZone`, { headers: { cookie: `${manageCookieName(bookingId)}=${sessionToken}` } }), { params: Promise.resolve({ id: bookingId }) })).status).toBe(400);
     for (let index = 0; index < 35; index += 1) expect((await getBooking(new Request(`http://localhost:3000/api/bookings/${bookingId}`, { headers: { cookie: `${manageCookieName(bookingId)}=${sessionToken}` } }), { params: Promise.resolve({ id: bookingId }) })).status).toBe(200);
-    expect((await call("2099-08-24T09:00:00.000Z")).status).toBe(200);
-    expect((await call("2099-08-26T09:00:00.000Z")).status).toBe(200);
-    expect((await call("2099-08-26T09:00:00.000Z")).status).toBe(200);
-    expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ startAt: new Date("2099-08-26T09:00:00.000Z"), mutationVersion: 2 });
+    expect((await call("2099-08-24T09:15:00.000Z")).status).toBe(200);
+    expect((await call("2099-08-26T09:15:00.000Z")).status).toBe(200);
+    expect((await call("2099-08-26T09:15:00.000Z")).status).toBe(200);
+    expect(await db.booking.findUniqueOrThrow({ where: { id: bookingId } })).toMatchObject({ startAt: new Date("2099-08-26T09:15:00.000Z"), mutationVersion: 2 });
     expect(await db.integrationOutbox.count({ where: { bookingId, kind: "CALENDAR_UPDATE" } })).toBe(2);
     expect((await deleteBooking(new Request(`http://localhost:3000/api/bookings/${bookingId}`, { method: "DELETE", headers: { origin: "http://localhost:3000", cookie: `${manageCookieName(bookingId)}=${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify({ reason: "Completed flow" }) }), { params: Promise.resolve({ id: bookingId }) })).status).toBe(200);
     await db.booking.delete({ where: { id: bookingId } });

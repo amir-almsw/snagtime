@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { SnagTimeApiError } from "@/lib/api-client";
 import { frontendApi } from "./api-adapter";
-import { BrandMark } from "./ui";
+import { StudioLogo } from "./ui";
 
 export function ClientGateForm({ next }: { next: string }) {
   const [password, setPassword] = useState("");
@@ -22,8 +22,8 @@ export function ClientGateForm({ next }: { next: string }) {
   return (
     <div className="auth-page dvision">
       <main className="auth-card">
-        <BrandMark />
-        <div><span className="outcome-eyebrow">Clients only</span><h1>Welcome to Dvision Studio</h1><p>The book is kept for our regulars. Enter the studio password to see what’s open — ask us for it next time you’re in the chair.</p></div>
+        <StudioLogo size="lg" />
+        <div><span className="outcome-eyebrow">Clients only</span><h1>Welcome</h1><p>The book is kept for our regulars. Enter the studio password to see what’s open — ask us for it next time you’re in the chair.</p></div>
         <form onSubmit={submit}>
           <label>Studio password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
           {error && <div className="form-error" role="alert" aria-live="assertive">{error}</div>}

@@ -19,10 +19,12 @@ describe("availability slot generation", () => {
     ])).toEqual([{ start: new Date("2026-08-24T10:00:00Z"), end: new Date("2026-08-24T11:00:00Z") }]);
   });
 
-  it("expands weekly availability into deterministic UTC slots", () => {
+  // Slots step 45 minutes from the interval's start whatever the service takes: a 30-minute service in a
+  // 09:00-11:00 window gives 09:00, 09:45 and 10:30, and 10:30 only because it still ends by 11:00.
+  it("expands weekly availability into deterministic UTC slots on the 45-minute grid", () => {
     const slots = generateSlots({
       eventType,
-      schedule: { timeZone: "America/Chicago", intervals: [{ dayOfWeek: 1, startMinute: 9 * 60, endMinute: 10 * 60 }] },
+      schedule: { timeZone: "America/Chicago", intervals: [{ dayOfWeek: 1, startMinute: 9 * 60, endMinute: 11 * 60 }] },
       busy: [],
       from: new Date("2026-08-24T00:00:00.000Z"),
       to: new Date("2026-08-25T00:00:00.000Z"),
@@ -31,8 +33,8 @@ describe("availability slot generation", () => {
     });
     expect(slots.map((slot) => slot.start)).toEqual([
       "2026-08-24T14:00:00.000Z",
-      "2026-08-24T14:15:00.000Z",
-      "2026-08-24T14:30:00.000Z",
+      "2026-08-24T14:45:00.000Z",
+      "2026-08-24T15:30:00.000Z",
     ]);
     expect(slots.every((slot) => slot.timeZone === "America/New_York")).toBe(true);
   });
@@ -40,14 +42,15 @@ describe("availability slot generation", () => {
   it("removes overlaps including configured buffers", () => {
     const slots = generateSlots({
       eventType: { ...eventType, bufferBeforeMinutes: 15, bufferAfterMinutes: 15 },
-      schedule: { timeZone: "UTC", intervals: [{ dayOfWeek: 1, startMinute: 9 * 60, endMinute: 11 * 60 }] },
+      schedule: { timeZone: "UTC", intervals: [{ dayOfWeek: 1, startMinute: 9 * 60, endMinute: 12 * 60 }] },
       busy: [{ start: new Date("2026-08-24T10:00:00.000Z"), end: new Date("2026-08-24T10:30:00.000Z") }],
       from: new Date("2026-08-24T00:00:00.000Z"),
       to: new Date("2026-08-25T00:00:00.000Z"),
       now: new Date("2026-08-20T00:00:00.000Z"),
       outputTimeZone: "UTC",
     });
-    expect(slots.map((slot) => slot.start)).toEqual(["2026-08-24T09:00:00.000Z", "2026-08-24T09:15:00.000Z"]);
+    // 09:45 falls to its after-buffer (occupied until 10:30) and 10:30 to its before-buffer (from 10:15).
+    expect(slots.map((slot) => slot.start)).toEqual(["2026-08-24T09:00:00.000Z", "2026-08-24T11:15:00.000Z"]);
   });
 
   it("uses date overrides and honors time off instead of weekly hours", () => {

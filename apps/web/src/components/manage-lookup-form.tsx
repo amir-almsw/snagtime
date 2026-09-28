@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { SnagTimeApiError } from "@/lib/api-client";
 import { frontendApi } from "./api-adapter";
-import { BrandMark } from "./ui";
+import { StudioLogo } from "./ui";
 
 type Mode = "reference" | "email";
 
@@ -31,7 +31,7 @@ export function ManageLookupForm() {
     return (
       <div className="auth-page dvision">
         <main className="auth-card">
-          <BrandMark />
+          <StudioLogo size="lg" />
           <div>
             <span className="outcome-eyebrow">Check your inbox</span>
             <h1>If we found it, the link is on its way</h1>
@@ -51,7 +51,7 @@ export function ManageLookupForm() {
   return (
     <div className="auth-page dvision">
       <main className="auth-card">
-        <BrandMark />
+        <StudioLogo size="lg" />
         <div>
           <span className="outcome-eyebrow">Manage my appointment</span>
           <h1>Find your appointment</h1>
