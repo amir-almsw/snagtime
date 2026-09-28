@@ -137,8 +137,32 @@ export function CancelBookingView({ bookingId, slug = "" }: { bookingId: string;
   const [recovering, setRecovering] = useState(false);
   const [loadingBooking, setLoadingBooking] = useState(true);
   const [error, setError] = useState("");
+  const recoveryAuthority = useRef("");
   useEffect(() => {
-    frontendApi.getBookingForManage(bookingId).then(setBooking).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load this booking.")).finally(() => setLoadingBooking(false));
+    let active = true;
+    // The emailed "Cancel appointment" link carries the same one-use recovery token as the reschedule
+    // link. Claim it from the fragment and consume it exactly as RescheduleBookingView does; when the
+    // reschedule page already spent it, the manage cookie that page set is what lets the read succeed.
+    const load = () => {
+      const recovery = retainBookingRecoveryAuthority(recoveryAuthority, () => claimOneUseLinkAuthority("recovery"));
+      if (recovery) { setBooking(null); setLoadingBooking(true); setError(""); }
+      const shared = shareBookingRecoveryLoad(`${bookingId}\u0000cancel\u0000${recovery}`, async () => {
+        if (!recovery) return frontendApi.getBookingForManage(bookingId);
+        let consumeFailure: unknown;
+        try {
+          const established = await frontendApi.consumeBookingManageLink(recovery);
+          if (established.bookingId !== bookingId) throw new Error("This recovery link does not match the requested booking.");
+        } catch (reason) { consumeFailure = reason; }
+        try { return await frontendApi.getBookingForManage(bookingId); }
+        catch { throw consumeFailure ?? new Error("Could not establish a secure booking session."); }
+      });
+      void shared.promise.then((item) => { if (active) { setBooking(item); setError(""); } })
+        .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load this booking."); })
+        .finally(() => { if (active) { recoveryAuthority.current = ""; setLoadingBooking(false); } });
+    };
+    load();
+    window.addEventListener("hashchange", load);
+    return () => { active = false; window.removeEventListener("hashchange", load); };
   }, [bookingId]);
   const cancel = async () => {
     setLoading(true); setError("");

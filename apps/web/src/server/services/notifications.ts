@@ -6,7 +6,7 @@ import { db } from "@/server/db";
 import { decryptToken, encryptToken } from "@/server/crypto/tokens";
 import { systemEmailIdentity, validatedMailbox } from "@/server/email-config";
 import { structuredLog } from "@/server/observability";
-import { renderEmailHtml, renderEmailText, safeAccent, type EmailBody, type EmailBrand } from "@/server/services/email-template";
+import { renderEmailHtml, renderEmailText, type EmailBody, type EmailBrand, type EmailSection } from "@/server/services/email-template";
 
 export type EmailKind = "EMAIL_VERIFY" | "PASSWORD_RESET" | "WORKSPACE_INVITATION" | "BOOKING_RECOVERY" | "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED" | "BOOKING_REMINDER";
 export type EmailDelivery = { workspaceId: string; outboxId: string; idempotencyKey: string; recipientEmail: string; subject: string; text: string; html?: string; replyTo?: string };
@@ -181,7 +181,11 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
   if (!recovery || recovery.workspaceId !== row.workspaceId || recovery.bookingId !== row.bookingId || recovery.email !== row.recipientEmail || recovery.consumedAt || recovery.revokedAt || recovery.expiresAt <= at) return null;
   const binding = bookingTokenBinding(recovery.workspaceId, recovery.bookingId, recovery.email); const token = materializeActionToken(recovery.id, "BOOKING_RECOVERY", binding);
   if (!tokenHashMatches(actionTokenHash(token, "BOOKING_RECOVERY", binding), recovery.tokenHash)) return null;
-  const manageUrl = `${base}/manage/${recovery.bookingId}/reschedule#recovery=${encodeURIComponent(token)}`;
+  // Both links carry the same one-use token. Whichever the client opens first consumes it and sets the
+  // per-booking manage cookie; the other page then finds the token spent but the cookie valid, which
+  // both RescheduleBookingView and CancelBookingView accept.
+  const fragment = `#recovery=${encodeURIComponent(token)}`;
+  const links: ClientLinks = { reschedule: `${base}/manage/${recovery.bookingId}/reschedule${fragment}`, cancel: `${base}/manage/${recovery.bookingId}/cancel${fragment}`, book: `${base}/book` };
   // A recovery mail carries only its token id, so the appointment it refers to is read here rather than
   // snapshotted at enqueue time. A booking email carries its own snapshot and needs no second read.
   const detail = await db.booking.findFirst({ where: { id: recovery.bookingId, workspaceId: row.workspaceId }, select: { status: true, reference: true, eventTitleSnapshot: true, inviteeName: true, inviteeTimeZone: true, startAt: true, endAt: true, durationMinutes: true, locationTypeSnapshot: true, locationValueSnapshot: true, priceCents: true, currency: true, stripePaymentStatus: true, refundStatus: true } });
@@ -193,7 +197,7 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
     ? clientPayload({ ...current, id: recovery.bookingId, workspaceId: row.workspaceId, hostId: "", inviteeEmail: recovery.email, mutationVersion: 0 }, recovery.id)
     : payload;
   const brand = await brandFor(row.workspaceId);
-  return { subject: row.subjectSnapshot, ...renderClientEmail(brand, row.kind, view, manageUrl, base) };
+  return { subject: row.subjectSnapshot, ...renderClientEmail(brand, row.kind, view, links, at) };
 }
 
 export function failureCode(error: unknown) {
@@ -208,62 +212,83 @@ export function failureCode(error: unknown) {
 // WorkspaceBranding, so this read raised insufficient_privilege and every client email retried to
 // DEAD over a hex colour, while the organizer copy -- whose branch returns before this point -- went
 // out fine. The grant is fixed, but a cosmetic read must never be able to hold a confirmation again.
+// The sign-off is the owner's own name, read through the branding row's user: the worker holds
+// SELECT(name) on "User" and a reference policy on both tables (postgres-guards.sql).
 async function brandFor(workspaceId: string): Promise<EmailBrand> {
   try {
-    const workspace = await db.workspace.findUnique({ where: { id: workspaceId }, select: { name: true, branding: { select: { workspaceName: true, accentColor: true, footerText: true } } } });
-    return { name: workspace?.branding?.workspaceName || workspace?.name || "Your appointment", accentColor: safeAccent(workspace?.branding?.accentColor), footerText: workspace?.branding?.footerText ?? null };
+    const workspace = await db.workspace.findUnique({ where: { id: workspaceId }, select: { name: true, branding: { select: { workspaceName: true, footerText: true, user: { select: { name: true } } } } } });
+    const name = workspace?.branding?.workspaceName || workspace?.name || STUDIO;
+    return { name, signature: workspace?.branding?.user.name || name, footerText: workspace?.branding?.footerText ?? null };
   } catch (error) {
     structuredLog("warn", { event: "email.branding_unavailable", code: failureCode(error) });
-    return { name: "Your appointment", accentColor: safeAccent(null), footerText: null };
+    return { name: STUDIO, signature: STUDIO, footerText: null };
   }
 }
 
-function clientDetails(payload: Record<string, unknown>, whenLabel: string) {
-  const details: EmailBody["details"] = [{ label: "Service", value: String(payload.eventTitle) }, { label: whenLabel, value: bookingTime(String(payload.startAt), String(payload.timeZone)) }];
+type ClientLinks = { reschedule: string; cancel: string; book: string };
+const STUDIO = "Dvision Studio";
+// The client's line reads as a person would write it: "Thursday 8 October at 12:00". The year is added
+// only when the appointment falls in a different year from the day the mail is sent, and the zone only
+// when the client booked in one other than the studio's, so an Amsterdam client never sees "(CEST)".
+function clientTime(startAt: string, timeZone: string, at: Date) {
+  const start = DateTime.fromISO(startAt).setZone(timeZone).setLocale("en-GB");
+  const year = start.year === DateTime.fromJSDate(at).setZone(timeZone).year ? "" : " yyyy";
+  const zone = timeZone === "Europe/Amsterdam" ? "" : " (ZZZZ)";
+  return start.toFormat(`cccc d LLLL${year} 'at' HH:mm${zone}`);
+}
+// "★ Haircut": the star marks the service in every sentence that names it. A barber who already put
+// one in the service name keeps theirs rather than getting two.
+function starred(title: string) { return title.startsWith("★") ? title : `★ ${title}`; }
+function clientFootnote(payload: Record<string, unknown>) {
+  const parts: string[] = [];
+  if (payload.reference) parts.push(`Booking reference ${String(payload.reference)}`);
   const minutes = Number(payload.durationMinutes);
-  if (Number.isFinite(minutes) && minutes > 0) details.push({ label: "Length", value: `${minutes} minutes` });
-  if (payload.location) details.push({ label: "Where", value: String(payload.location) });
+  if (Number.isFinite(minutes) && minutes > 0) parts.push(`${minutes} minutes`);
   const cents = Number(payload.priceCents);
-  if (cents > 0) details.push({ label: "Price", value: `${money(cents, String(payload.currency))} — ${String(payload.paymentTruth).toLowerCase()}` });
-  // Last, because it is the one line a client copies out when the link has been used up.
-  if (payload.reference) details.push({ label: "Booking reference", value: String(payload.reference) });
-  return details;
+  if (cents > 0) parts.push(`${money(cents, String(payload.currency))}, ${String(payload.paymentTruth).toLowerCase()}`);
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
-const REPLY_NOTE = "Need to tell us something? Just reply to this email.";
-function clientBody(kind: string, payload: Record<string, unknown>, manageUrl: string, base: string): EmailBody {
-  const title = String(payload.eventTitle); const when = bookingTime(String(payload.startAt), String(payload.timeZone));
-  const name = String(payload.inviteeName || "").trim().split(/\s+/)[0];
-  const greeting = name ? `${name}, ` : "";
+// The studio's own words, as the barber writes them: the sections are what make the mail read as a
+// welcome rather than a receipt.
+function experience(studio: string): EmailSection {
+  return { heading: "The Experience", lines: [`At ${studio.toUpperCase()}, this is more than just a haircut.`, "You’re stepping into a premium grooming experience — precision cuts, attention to detail, and a clean, high-end atmosphere designed to make you look and feel your best."] };
+}
+const ARRIVAL: EmailSection = { heading: "Arrival", lines: ["Please arrive on time to ensure the full experience without rush.", "If you need to reschedule, you can do it easily using the link below."] };
+const CLOSING = "I truly appreciate your trust and look forward to seeing you.";
+function clientBody(brand: EmailBrand, kind: string, payload: Record<string, unknown>, links: ClientLinks, at: Date): EmailBody {
+  const service = starred(String(payload.eventTitle)); const when = clientTime(String(payload.startAt), String(payload.timeZone), at);
+  const first = String(payload.inviteeName || "").trim().split(/\s+/)[0];
+  const greeting = first ? `Hey ${first},` : "Hey there,";
+  const location = payload.location ? String(payload.location) : undefined;
+  const manage = [{ label: "Reschedule appointment", href: links.reschedule }, { label: "Cancel appointment", href: links.cancel }];
+  const footnote = clientFootnote(payload);
   if (kind === "BOOKING_CANCELLED") return {
-    preheader: `Canceled — was ${when}`, eyebrow: "Appointment canceled", heading: "Your appointment is canceled",
-    intro: `${greeting}your ${title} has been canceled. Nothing further is needed from you.`,
-    details: clientDetails(payload, "Was booked for"), action: { label: "Book another appointment", href: `${base}/book` }, note: REPLY_NOTE,
+    preheader: `Canceled — was ${when}`, greeting, summary: `Your appointment for ${service} on ${when} has been canceled.`,
+    sections: [{ heading: "What happens next", lines: ["Nothing further is needed from you.", "Whenever you’re ready, you can book a new appointment using the link below."] }],
+    closing: "I hope to see you again soon.", links: [{ label: "Book another appointment", href: links.book }], footnote,
   };
   if (kind === "BOOKING_RESCHEDULED") return {
-    preheader: `Moved to ${when}`, eyebrow: "New time confirmed", heading: "Your appointment has moved",
-    intro: `${greeting}your ${title} has moved. The new time is below — nothing else has changed.`,
-    details: clientDetails(payload, "New time"), action: { label: "Reschedule or cancel", href: manageUrl }, note: REPLY_NOTE,
+    preheader: `Moved to ${when}`, greeting, summary: `Your appointment for ${service} has moved to ${when}.`, location,
+    sections: [{ heading: "What changed", lines: ["Only the time. Your service, the studio and everything else stay the same."] }, ARRIVAL],
+    closing: CLOSING, links: manage, footnote,
   };
   if (kind === "BOOKING_REMINDER") return {
-    preheader: `${when} — ${String(payload.location || "see you soon")}`, eyebrow: "Coming up", heading: "See you soon",
-    intro: `${greeting}a reminder that your ${title} is coming up.`,
-    details: clientDetails(payload, "When"), action: { label: "Reschedule or cancel", href: manageUrl }, note: REPLY_NOTE,
+    preheader: location ? `${when} — ${location}` : when, greeting, summary: `Your appointment for ${service} is coming up on ${when}.`, location,
+    sections: [ARRIVAL], closing: CLOSING, links: manage, footnote,
   };
   if (kind === "BOOKING_RECOVERY") return {
-    preheader: "Your link to reschedule or cancel", eyebrow: "Manage my appointment", heading: "Here is your appointment",
-    intro: `${greeting}use the button below to reschedule or cancel your ${title}.`,
-    details: clientDetails(payload, "When"), action: { label: "Manage my appointment", href: manageUrl }, note: REPLY_NOTE,
+    preheader: "Your link to reschedule or cancel", greeting, summary: `Here is the link to manage your appointment for ${service} on ${when}.`, location,
+    sections: [{ heading: "Managing your appointment", lines: ["Use the links below to reschedule or cancel.", "If you didn’t ask for this email, you can safely ignore it."] }],
+    closing: "I look forward to seeing you.", links: manage, footnote,
   };
   return {
-    preheader: `${when} — ${String(payload.location || "confirmed")}`, eyebrow: "Appointment confirmed", heading: "You’re booked in",
-    intro: `${greeting}your ${title} is confirmed. We will see you then.`,
-    details: clientDetails(payload, "When"), action: { label: "Reschedule or cancel", href: manageUrl },
-    note: `Plans change — the button above works right up until your appointment. ${REPLY_NOTE}`,
+    preheader: location ? `${when} — ${location}` : when, greeting, summary: `Your appointment for ${service} is confirmed for ${when}.`, location,
+    sections: [experience(brand.name), ARRIVAL], closing: CLOSING, links: manage, footnote,
   };
 }
-function renderClientEmail(brand: EmailBrand, kind: string, payload: Record<string, unknown>, manageUrl: string, base: string) {
-  const body = clientBody(kind, payload, manageUrl, base);
+function renderClientEmail(brand: EmailBrand, kind: string, payload: Record<string, unknown>, links: ClientLinks, at: Date) {
+  const body = clientBody(brand, kind, payload, links, at);
   return { text: renderEmailText(brand, body), html: renderEmailHtml(brand, body) };
 }
 
