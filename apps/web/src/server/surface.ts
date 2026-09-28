@@ -8,9 +8,9 @@ export type Surface = "book" | "admin";
 // each of those routes authorizes independently via session or signed capability.
 const bookPrefixes = ["/gate", "/book", "/manage", "/api/gate", "/api/public", "/api/bookings", "/api/health"];
 const adminPrefixes = [
-  "/dashboard", "/bookings", "/availability", "/event-types", "/integrations", "/settings", "/onboarding",
+  "/dashboard", "/bookings", "/customers", "/availability", "/event-types", "/integrations", "/settings", "/onboarding",
   "/forgot-password", "/reset-password", "/verify-email", "/manage",
-  "/api/auth", "/api/account", "/api/workspace", "/api/event-types", "/api/availability", "/api/settings", "/api/integrations", "/api/bookings", "/api/health",
+  "/api/auth", "/api/account", "/api/workspace", "/api/event-types", "/api/availability", "/api/settings", "/api/integrations", "/api/bookings", "/api/customers", "/api/health",
 ];
 
 // /api/bookings/* stays on the booking surface for the manage flow above, but the collection route

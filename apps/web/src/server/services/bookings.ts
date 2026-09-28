@@ -139,6 +139,16 @@ export function activeBookingConflict(bookingId: string) {
   (error as AppError & { bookingId?: string }).bookingId = bookingId;
   return error;
 }
+// The Customers tab's blacklist. No public policy exposes a BlockedEmail row, so production asks a definer
+// that answers yes or no for the signed booking_create context's own workspace; SQLite reads the row.
+export async function emailIsBlocked(workspaceId: string, email: string) {
+  if (process.env.DATABASE_PROVIDER === "postgresql" && process.env.NODE_ENV === "production") {
+    const rows = await db.$queryRawUnsafe<Array<{ blocked: boolean | null }>>("SELECT tempocove_email_blocked($1::text) AS blocked", email);
+    return rows[0]?.blocked === true;
+  }
+  return Boolean(await db.blockedEmail.findUnique({ where: { workspaceId_email: { workspaceId, email: email.toLowerCase() } }, select: { id: true } }));
+}
+
 export async function activeBookingIdForEmail(workspaceId: string, email: string) {
   // No public RLS policy exposes a Booking row by invitee email, so production asks a definer
   // function that returns only the id. A plain query here would read empty in production.
@@ -172,7 +182,9 @@ async function ensureCheckoutLinked(bookingId: string, payments: PaymentService)
 // booking from its own dashboard is the authority over its own calendar, so it books a regular's next
 // appointment while the current one is still ahead of them. Every other guard -- the slot has to be
 // genuinely free, the answers valid, the buffers honoured -- applies unchanged.
-export type CreateBookingOptions = { allowSecondActiveBooking?: boolean };
+// byStudio marks the dashboard's own "Add booking", which only changes what a refusal says: the barber is
+// told why, a client on the public page is not.
+export type CreateBookingOptions = { allowSecondActiveBooking?: boolean; byStudio?: boolean };
 
 export async function createBooking(
   slug: string, input: CreateBookingInput, idempotencyKey: string,
@@ -189,6 +201,11 @@ export async function createBooking(
       catch { prior.checkoutState = "RETRY_REQUIRED"; await db.booking.updateMany({ where: { id: prior.booking.id, status: "PENDING_PAYMENT" }, data: { stripePaymentStatus: "checkout_retry" } }); }
     }
     return prior;
+  }
+  // Checked after the idempotent replay above, so a client blacklisted after booking still gets their own
+  // earlier answer back, and before anything else, so a refused address costs no slot lookup.
+  if (await withDatabaseTransactionRetry(() => emailIsBlocked(eventType.workspaceId, input.inviteeEmail))) {
+    throw new AppError("EMAIL_BLOCKED", options.byStudio ? "This email is on the studio’s blacklist. Remove it under Customers to book it in." : "This email address can’t be used to book online. Please contact the studio.", 403);
   }
   const existing = options.allowSecondActiveBooking ? null : await withDatabaseTransactionRetry(() => activeBookingIdForEmail(eventType.workspaceId, input.inviteeEmail));
   if (existing) throw activeBookingConflict(existing);

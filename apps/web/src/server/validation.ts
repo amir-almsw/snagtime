@@ -130,3 +130,14 @@ export const brandingInput = z.object({
   footerText: z.string().trim().max(300).nullable(),
 }).strict();
 export const profileImageInput = z.object({ imageUrl: z.string().max(IMAGE_DATA_URL_MAX_CHARS).nullable() }).strict();
+// The Customers tab. Addresses are trimmed and lower-cased before the format check so a pasted " Amir@X.nl "
+// lands as the same row a booking would match; phone numbers are kept exactly as the studio typed them.
+const clientEmail = z.string().trim().toLowerCase().max(254).pipe(z.email());
+export const knownClientInput = z.object({
+  name: z.string().trim().min(1).max(120), email: clientEmail, phone: z.string().trim().max(40).optional(),
+}).strict();
+// Rows are checked one at a time by the service, so one bad line in a spreadsheet is counted and skipped
+// instead of failing the whole import; only the envelope and its size are enforced here.
+export const KNOWN_CLIENT_IMPORT_MAX_ROWS = 5000;
+export const knownClientImportInput = z.object({ clients: z.array(z.unknown()).min(1).max(KNOWN_CLIENT_IMPORT_MAX_ROWS) }).strict();
+export const blockedEmailInput = z.object({ email: clientEmail, reason: z.string().trim().max(200).optional() }).strict();

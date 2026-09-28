@@ -15,6 +15,7 @@ const navigation: { href: string; label: string; icon: IconName }[] = [
   { href: "/event-types", label: "Services", icon: "event-types" },
   { href: "/availability", label: "Availability", icon: "availability" },
   { href: "/bookings", label: "Bookings", icon: "bookings" },
+  { href: "/customers", label: "Customers", icon: "team" },
   { href: "/integrations", label: "Integrations", icon: "integrations" },
 ];
 
