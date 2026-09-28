@@ -226,10 +226,12 @@ body:has(.dvision) .theme-toggle{display:none}
 
 /* The studio's wordmark is its logo file, white on the black ground, so every place these pages set the
    name in type carries the image instead. Height alone sizes it; the file keeps its own proportions. */
-.dvision .studio-logo{display:block;height:22px;width:auto}
-.dvision .studio-logo.is-lg{height:30px}
-.dvision .studio-logo.is-sm{height:14px}
-.dvision .studio-logo.is-xs{height:11px;opacity:.7}
+/* align-self and object-fit matter: the cards are column flex containers, which stretch a child of
+   automatic width to the full card, and a wordmark stretched sideways reads as a blurred smear. */
+.dvision .studio-logo{display:block;height:26px;width:auto;max-width:100%;align-self:flex-start;flex:0 0 auto;object-fit:contain}
+.dvision .studio-logo.is-lg{height:36px}
+.dvision .studio-logo.is-sm{height:16px}
+.dvision .studio-logo.is-xs{height:12px;opacity:.7}
 .dvision .host-label{display:block;margin-bottom:12px}
 .dvision .booking-brand{gap:14px}
 .dvision .booking-brand span{font-family:"DM Mono",ui-monospace,SFMono-Regular,monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
