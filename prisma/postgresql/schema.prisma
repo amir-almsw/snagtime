@@ -62,6 +62,8 @@ model Workspace {
   localInboxMessages    LocalInboxMessage[]
   accountActionTokens   AccountActionToken[]
   bookingRecoveryTokens BookingRecoveryToken[]
+  knownClients          KnownClient[]
+  blockedEmails         BlockedEmail[]
 }
 
 model Membership {
@@ -212,6 +214,36 @@ model WorkspaceBranding {
   footerText  String?
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// The studio's address book: people the barber books in by hand from the dashboard. Seeded by importing
+// the old salon system's export and grown by hand; nothing here is created by public booking. The email
+// is stored lower-cased and is unique per studio, which is what makes a re-import create-only.
+model KnownClient {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  email       String
+  phone       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, email])
+}
+
+// Addresses the studio no longer takes bookings from. createBooking refuses them on both the public page
+// and the dashboard; adding one also cancels that address's upcoming appointments. Lower-cased, like
+// Booking.inviteeEmail, so a plain equality is the whole match.
+model BlockedEmail {
+  id          String    @id @default(cuid())
+  workspaceId String
+  email       String
+  reason      String?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, email])
 }
 
 model Booking {

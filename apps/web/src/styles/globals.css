@@ -293,3 +293,34 @@ body:has(.dvision) .theme-toggle{display:none}
 .dvision .stepper .is-active{color:var(--brand)}
 .dvision .stepper-step[aria-disabled="true"]{color:var(--subtle)}
 .dvision .public-footer strong,.dvision .public-footer b{font-family:Syne,Manrope,sans-serif;letter-spacing:.18em;text-transform:uppercase;font-size:11px;font-weight:600}
+
+/* Customers tab (dashboard). Built on the theme variables, so the light and dark appearances both come from
+   :root and :root[data-theme=dark]; the table head reuses .booking-table-head for its themed background. */
+.customers-switch{align-self:flex-start}
+.customers-count{margin-left:6px;font-size:10px;opacity:.7}
+.customers-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.customer-form{display:flex;flex-direction:column;gap:14px}
+.customer-form-intro h2{margin:0 0 4px;font-size:14px}
+.customer-form-intro p{margin:0;color:var(--muted);font-size:12px}
+.customer-form-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.customer-form-actions{display:flex;justify-content:flex-end;gap:8px}
+.customers-panel{padding:0;overflow:hidden}
+.booking-table-head.customer-table-head,.customer-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.4fr) minmax(0,.9fr) auto;gap:14px;align-items:center;padding:10px 18px}
+.booking-table-head.customer-table-head.blocked-table,.customer-row.blocked-table{grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) minmax(0,.7fr) auto}
+.customer-list{list-style:none;margin:0;padding:0}
+.customer-row{border-bottom:1px solid var(--line);font-size:12px}
+.customer-cell{display:flex;align-items:center;gap:8px;min-width:0}
+.customer-stacked{flex-direction:column;align-items:flex-start;gap:2px}
+.customer-stacked small{color:var(--muted);font-size:11px}
+.customer-value{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.customer-muted{color:var(--muted);font-size:12px}
+.customer-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.customer-actions .icon-button.customer-remove{position:static;width:30px;height:30px}
+.copy-button{display:inline-flex;flex:0 0 auto;align-items:center;gap:4px;padding:3px 7px;border:1px solid var(--line);border-radius:7px;background:transparent;color:var(--muted);font-size:10px;cursor:pointer}
+.copy-button:hover{color:var(--ink);border-color:var(--line-strong)}
+.copy-button.is-copied{color:var(--green);border-color:var(--green)}
+@media(max-width:820px){
+  .booking-table-head.customer-table-head{display:none}
+  .customer-row,.customer-row.blocked-table{grid-template-columns:1fr;gap:6px}
+  .customer-actions{justify-content:flex-start}
+}

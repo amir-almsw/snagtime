@@ -93,3 +93,10 @@ export type ResumeBookingCheckoutResult = {
   checkoutState: "NOT_REQUIRED" | "READY" | "RETRY_REQUIRED";
   checkoutUrl: string | null;
 };
+
+// The dashboard's Customers tab.
+export type KnownClient = { id: string; name: string; email: string; phone: string | null; createdAt: string; blocked: boolean };
+export type KnownClientInput = { name: string; email: string; phone?: string };
+export type KnownClientImportResult = { added: number; skipped: number; invalid: number };
+export type BlockedEmailEntry = { id: string; email: string; reason: string | null; createdAt: string; clientName: string | null };
+export type BlockEmailResult = { entry: BlockedEmailEntry; canceled: number; failed: number };

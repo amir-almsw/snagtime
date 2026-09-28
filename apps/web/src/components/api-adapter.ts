@@ -162,4 +162,11 @@ export const frontendApi = {
   googleAuthorizePath: snagTimeApi.googleAuthorizePath,
   listLocalEmailInbox: snagTimeApi.listLocalEmailInbox,
   retryEmailOutbox: snagTimeApi.retryEmailOutbox,
+  listKnownClients: snagTimeApi.listKnownClients,
+  addKnownClient: snagTimeApi.addKnownClient,
+  importKnownClients: snagTimeApi.importKnownClients,
+  deleteKnownClient: snagTimeApi.deleteKnownClient,
+  listBlockedEmails: snagTimeApi.listBlockedEmails,
+  blockEmail: snagTimeApi.blockEmail,
+  unblockEmail: snagTimeApi.unblockEmail,
 };

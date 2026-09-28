@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     if (!idempotencyKey || !/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) throw new AppError("INVALID_IDEMPOTENCY_KEY", "A valid Idempotency-Key header is required.", 400);
     const { eventTypeId, ...input } = hostBookingInput.parse(await jsonBody(request));
     const eventType = await getEventTypeById(access.workspaceId, eventTypeId);
-    const created = await createBooking(eventType.slug, input, idempotencyKey, undefined, undefined, { allowSecondActiveBooking: true });
+    const created = await createBooking(eventType.slug, input, idempotencyKey, undefined, undefined, { allowSecondActiveBooking: true, byStudio: true });
     return ok(created.booking, { status: 201 });
   } catch (error) { return apiError(error); }
 }

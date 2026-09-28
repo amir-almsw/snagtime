@@ -40,7 +40,8 @@ function answerComplete(question: CustomQuestionView, answers: Record<string, st
 // The studio books a client in from the dashboard. The times offered are exactly the ones the booking
 // page would offer -- the server recomputes them and refuses anything that is not on that list -- so a
 // chair can never be double-sold from here, and the client gets the same confirmation and manage link.
-export function HostBookingForm({ services, timeZone, onClose, onCreated }: { services: EventType[]; timeZone: string; onClose: () => void; onCreated: (booking: Booking) => void }) {
+// initialClient comes from the Customers tab's "Book" button, so the barber only picks the service and time.
+export function HostBookingForm({ services, timeZone, onClose, onCreated, initialClient }: { services: EventType[]; timeZone: string; onClose: () => void; onCreated: (booking: Booking) => void; initialClient?: { name: string; email: string } | null }) {
   const drawerRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [serviceId, setServiceId] = useState(() => services[0]?.id ?? "");
@@ -51,8 +52,8 @@ export function HostBookingForm({ services, timeZone, onClose, onCreated }: { se
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedStart, setSelectedStart] = useState("");
   const [dayOffset, setDayOffset] = useState(0);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [name, setName] = useState(() => initialClient?.name ?? "");
+  const [email, setEmail] = useState(() => initialClient?.email ?? "");
   const [notes, setNotes] = useState("");
   const [answers, setAnswers] = useState<Record<string, string | boolean>>({});
   const [submitting, setSubmitting] = useState(false);

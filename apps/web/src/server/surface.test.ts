@@ -3,7 +3,7 @@ import { surfaceAllows } from "@/server/surface";
 
 describe("origin surface enforcement", () => {
   it("hides every admin surface from the booking origin", () => {
-    for (const path of ["/dashboard", "/bookings", "/settings", "/availability", "/event-types/new", "/onboarding", "/forgot-password", "/api/auth/session", "/api/account", "/api/workspace", "/api/event-types", "/api/settings/branding", "/api/integrations/status"]) {
+    for (const path of ["/dashboard", "/bookings", "/settings", "/availability", "/event-types/new", "/onboarding", "/forgot-password", "/api/auth/session", "/api/account", "/api/workspace", "/api/event-types", "/api/settings/branding", "/api/integrations/status", "/customers", "/api/customers", "/api/customers/import", "/api/customers/blacklist", "/api/customers/blacklist/abc"]) {
       expect(surfaceAllows("book", path), path).toBe(false);
     }
   });
@@ -31,7 +31,7 @@ describe("origin surface enforcement", () => {
     }
   });
   it("keeps the dashboard, account recovery, and organizer manage links on the admin origin", () => {
-    for (const path of ["/", "/dashboard", "/bookings", "/settings", "/onboarding", "/forgot-password", "/reset-password", "/verify-email", "/manage/abc/cancel", "/api/auth/session", "/api/workspace", "/api/bookings/abc", "/api/bookings/abc/slots", "/api/health/live"]) {
+    for (const path of ["/", "/dashboard", "/bookings", "/settings", "/onboarding", "/forgot-password", "/reset-password", "/verify-email", "/manage/abc/cancel", "/api/auth/session", "/api/workspace", "/api/bookings/abc", "/api/bookings/abc/slots", "/api/health/live", "/customers", "/api/customers", "/api/customers/abc", "/api/customers/import", "/api/customers/blacklist", "/api/customers/blacklist/abc"]) {
       expect(surfaceAllows("admin", path), path).toBe(true);
     }
   });

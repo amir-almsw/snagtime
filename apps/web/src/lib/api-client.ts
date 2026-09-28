@@ -20,6 +20,11 @@ import type {
   EmailVerificationResult,
   LocalInboxMessage,
   ResumeBookingCheckoutResult,
+  KnownClient,
+  KnownClientInput,
+  KnownClientImportResult,
+  BlockedEmailEntry,
+  BlockEmailResult,
 } from "@/lib/contracts";
 
 export class SnagTimeApiError extends Error {
@@ -66,6 +71,13 @@ export const snagTimeApi = {
   createEventType: (input: CreateEventTypeInput) => request<EventTypeSummary>("/api/event-types", { method: "POST", body: JSON.stringify(input) }),
   updateEventType: (id: string, input: UpdateEventTypeInput) => request<EventTypeSummary>(`/api/event-types/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteEventType: (id: string) => request<{ deleted: true }>(`/api/event-types/${id}`, { method: "DELETE" }),
+  listKnownClients: () => request<KnownClient[]>("/api/customers"),
+  addKnownClient: (input: KnownClientInput) => request<KnownClient>("/api/customers", { method: "POST", body: JSON.stringify(input) }),
+  importKnownClients: (clients: KnownClientInput[]) => request<KnownClientImportResult>("/api/customers/import", { method: "POST", body: JSON.stringify({ clients }) }),
+  deleteKnownClient: (id: string) => request<{ deleted: true }>(`/api/customers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  listBlockedEmails: () => request<BlockedEmailEntry[]>("/api/customers/blacklist"),
+  blockEmail: (email: string, reason?: string) => request<BlockEmailResult>("/api/customers/blacklist", { method: "POST", body: JSON.stringify(reason ? { email, reason } : { email }) }),
+  unblockEmail: (id: string) => request<{ deleted: true }>(`/api/customers/blacklist/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getAvailability: () => request<AvailabilitySchedule>("/api/availability"),
   setAvailability: (schedule: AvailabilitySchedule) => request<AvailabilitySchedule>("/api/availability", { method: "PUT", body: JSON.stringify(schedule) }),
   listBookings: () => request<BookingSummary[]>("/api/bookings"),

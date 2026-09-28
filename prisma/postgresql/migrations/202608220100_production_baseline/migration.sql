@@ -165,6 +165,30 @@ CREATE TABLE "WorkspaceBranding" (
 );
 
 -- CreateTable
+CREATE TABLE "KnownClient" (
+    "id" TEXT NOT NULL,
+    "workspaceId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "phone" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "KnownClient_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "BlockedEmail" (
+    "id" TEXT NOT NULL,
+    "workspaceId" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "reason" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "BlockedEmail_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "Booking" (
     "id" TEXT NOT NULL,
     "reference" TEXT,
@@ -493,6 +517,12 @@ CREATE INDEX "AvailabilityOverride_workspaceId_userId_dateKey_idx" ON "Availabil
 CREATE UNIQUE INDEX "WorkspaceBranding_workspaceId_key" ON "WorkspaceBranding"("workspaceId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "KnownClient_workspaceId_email_key" ON "KnownClient"("workspaceId", "email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "BlockedEmail_workspaceId_email_key" ON "BlockedEmail"("workspaceId", "email");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Booking_reference_key" ON "Booking"("reference");
 
 -- CreateIndex
@@ -665,6 +695,12 @@ ALTER TABLE "WorkspaceBranding" ADD CONSTRAINT "WorkspaceBranding_userId_fkey" F
 
 -- AddForeignKey
 ALTER TABLE "WorkspaceBranding" ADD CONSTRAINT "WorkspaceBranding_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "KnownClient" ADD CONSTRAINT "KnownClient_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BlockedEmail" ADD CONSTRAINT "BlockedEmail_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Booking" ADD CONSTRAINT "Booking_eventTypeId_fkey" FOREIGN KEY ("eventTypeId") REFERENCES "EventType"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1037,7 +1073,7 @@ BEGIN
 END $fn$;
 REVOKE ALL ON FUNCTION tempocove_context_valid(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tempocove_context_valid(text) TO tempocove_app;
-GRANT SELECT ON tempocove_context_authority,"Workspace","Membership","AuthSession","User","WorkspaceInvitation","EventType","Booking","EmailOutbox","OAuthConnection" TO tempocove_rls_verifier;
+GRANT SELECT ON tempocove_context_authority,"Workspace","Membership","AuthSession","User","WorkspaceInvitation","EventType","Booking","EmailOutbox","OAuthConnection","BlockedEmail" TO tempocove_rls_verifier;
 ALTER FUNCTION tempocove_context_valid(text) OWNER TO tempocove_rls_verifier;
 
 CREATE OR REPLACE FUNCTION tempocove_live_member(row_workspace text,row_user text)
@@ -1159,11 +1195,11 @@ GRANT EXECUTE ON FUNCTION tempocove_workspace_access(text),tempocove_workspace_a
 DO $rls$
 DECLARE table_name text;
 BEGIN
-  FOREACH table_name IN ARRAY ARRAY['Workspace','Membership','WorkspaceInvitation','EventType','AvailabilitySchedule','AvailabilityOverride','WorkspaceBranding','Booking','BookingOccupancy','IntegrationOutbox','AccountActionToken','BookingRecoveryToken','EmailOutbox','LocalInboxMessage','AuthSession','OAuthState','OAuthConnection'] LOOP
+  FOREACH table_name IN ARRAY ARRAY['Workspace','Membership','WorkspaceInvitation','EventType','AvailabilitySchedule','AvailabilityOverride','WorkspaceBranding','Booking','BookingOccupancy','IntegrationOutbox','AccountActionToken','BookingRecoveryToken','EmailOutbox','LocalInboxMessage','AuthSession','OAuthState','OAuthConnection','KnownClient','BlockedEmail'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',table_name);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY',table_name);
   END LOOP;
-  FOREACH table_name IN ARRAY ARRAY['Workspace','Membership','WorkspaceInvitation','EventType','AvailabilitySchedule','AvailabilityOverride','WorkspaceBranding','Booking','BookingOccupancy','IntegrationOutbox','EmailOutbox','LocalInboxMessage','OAuthConnection'] LOOP
+  FOREACH table_name IN ARRAY ARRAY['Workspace','Membership','WorkspaceInvitation','EventType','AvailabilitySchedule','AvailabilityOverride','WorkspaceBranding','Booking','BookingOccupancy','IntegrationOutbox','EmailOutbox','LocalInboxMessage','OAuthConnection','KnownClient','BlockedEmail'] LOOP
     EXECUTE format('CREATE POLICY app_workspace_read ON %I FOR SELECT TO tempocove_app USING (tempocove_workspace_access(%I))',table_name,CASE WHEN table_name='Workspace' THEN 'id' ELSE 'workspaceId' END);
   END LOOP;
 END $rls$;
@@ -1199,6 +1235,10 @@ CREATE POLICY app_workspace_booking_email_insert ON "EmailOutbox" FOR INSERT TO 
 CREATE POLICY app_workspace_booking_outbox_insert ON "IntegrationOutbox" FOR INSERT TO tempocove_app WITH CHECK (current_setting('tempocove.action',true)='booking_write' AND tempocove_booking_actor("bookingId") AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL AND EXISTS(SELECT 1 FROM "Booking" b WHERE b.id="bookingId" AND b."workspaceId"="IntegrationOutbox"."workspaceId"));
 CREATE POLICY app_workspace_schedule_write ON "AvailabilitySchedule" FOR ALL TO tempocove_app USING (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write') WITH CHECK (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write');
 CREATE POLICY app_workspace_override_write ON "AvailabilityOverride" FOR ALL TO tempocove_app USING (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write') WITH CHECK (tempocove_workspace_actor("workspaceId","userId") AND current_setting('tempocove.action',true)='availability_write');
+-- The Customers tab. Both lists are read under the ordinary workspace read above and written only by an
+-- owner or admin, each under its own action so neither write path can borrow the other's authority.
+CREATE POLICY app_known_client_write ON "KnownClient" FOR ALL TO tempocove_app USING (tempocove_workspace_admin("workspaceId") AND current_setting('tempocove.action',true)='client_write') WITH CHECK (tempocove_workspace_admin("workspaceId") AND current_setting('tempocove.action',true)='client_write');
+CREATE POLICY app_blocked_email_write ON "BlockedEmail" FOR ALL TO tempocove_app USING (tempocove_workspace_admin("workspaceId") AND current_setting('tempocove.action',true)='blocklist_write') WITH CHECK (tempocove_workspace_admin("workspaceId") AND current_setting('tempocove.action',true)='blocklist_write');
 
 -- Public slug resolution and the '__directory__' sentinel (the post-gate services list; active
 -- rows only, scalars only) are the only workspace-less tenant reads. Once a slug is resolved, the
@@ -1268,6 +1308,18 @@ $fn$;
 ALTER FUNCTION tempocove_active_booking_for_email(text) OWNER TO tempocove_rls_verifier;
 REVOKE ALL ON FUNCTION tempocove_active_booking_for_email(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tempocove_active_booking_for_email(text) TO tempocove_app;
+-- The blacklist check createBooking makes before taking an appointment, from the public page and from the
+-- dashboard alike (both run it under the public booking_create context). No public policy exposes a
+-- BlockedEmail row, so this answers one yes or no for the signed context's own workspace and nothing more.
+CREATE OR REPLACE FUNCTION tempocove_email_blocked(p_email text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+  SELECT EXISTS(SELECT 1 FROM "BlockedEmail" x
+  WHERE tempocove_context_valid('public') AND current_setting('tempocove.action',true)='booking_create'
+    AND x."workspaceId"=current_setting('tempocove.workspace_id',true) AND x.email=lower(p_email))
+$fn$;
+ALTER FUNCTION tempocove_email_blocked(text) OWNER TO tempocove_rls_verifier;
+REVOKE ALL ON FUNCTION tempocove_email_blocked(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tempocove_email_blocked(text) TO tempocove_app;
 -- Public availability is computed from the database, so a confirmed appointment leaves the booking
 -- page immediately instead of waiting for a calendar mirror. No public policy exposes another client's
 -- Booking row, so the slot list asks this definer function for the host's booked time: it returns only
