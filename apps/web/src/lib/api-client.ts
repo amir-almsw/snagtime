@@ -25,6 +25,8 @@ import type {
   KnownClientImportResult,
   BlockedEmailEntry,
   BlockEmailResult,
+  ClientMessageInput,
+  ClientMessageResult,
 } from "@/lib/contracts";
 
 export class SnagTimeApiError extends Error {
@@ -78,6 +80,7 @@ export const snagTimeApi = {
   listBlockedEmails: () => request<BlockedEmailEntry[]>("/api/customers/blacklist"),
   blockEmail: (email: string, reason?: string) => request<BlockEmailResult>("/api/customers/blacklist", { method: "POST", body: JSON.stringify(reason ? { email, reason } : { email }) }),
   unblockEmail: (id: string) => request<{ deleted: true }>(`/api/customers/blacklist/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  sendClientMessage: (input: ClientMessageInput) => request<ClientMessageResult>("/api/customers/message", { method: "POST", body: JSON.stringify(input) }),
   getAvailability: () => request<AvailabilitySchedule>("/api/availability"),
   setAvailability: (schedule: AvailabilitySchedule) => request<AvailabilitySchedule>("/api/availability", { method: "PUT", body: JSON.stringify(schedule) }),
   listBookings: () => request<BookingSummary[]>("/api/bookings"),

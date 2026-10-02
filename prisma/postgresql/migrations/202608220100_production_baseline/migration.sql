@@ -1240,6 +1240,16 @@ CREATE POLICY app_workspace_override_write ON "AvailabilityOverride" FOR ALL TO 
 CREATE POLICY app_known_client_write ON "KnownClient" FOR ALL TO tempocove_app USING (tempocove_workspace_admin("workspaceId") AND current_setting('tempocove.action',true)='client_write') WITH CHECK (tempocove_workspace_admin("workspaceId") AND current_setting('tempocove.action',true)='client_write');
 CREATE POLICY app_blocked_email_write ON "BlockedEmail" FOR ALL TO tempocove_app USING (tempocove_workspace_admin("workspaceId") AND current_setting('tempocove.action',true)='blocklist_write') WITH CHECK (tempocove_workspace_admin("workspaceId") AND current_setting('tempocove.action',true)='blocklist_write');
 
+-- The Customers tab's bulk "Message selected" action enqueues booking-less EmailOutbox rows under its own
+-- action. The workspace read policy already lets the app read them back; this policy is the only way to
+-- insert them, and it pins kind='BULK_MESSAGE' so it can never write a booking email without a booking.
+CREATE POLICY app_bulk_email_insert ON "EmailOutbox" FOR INSERT TO tempocove_app WITH CHECK (
+  tempocove_workspace_admin("workspaceId")
+  AND current_setting('tempocove.action',true)='bulk_email_write'
+  AND "bookingId" IS NULL AND kind='BULK_MESSAGE'
+  AND status='PENDING' AND "attemptCount"=0 AND "leaseToken" IS NULL
+);
+
 -- Public slug resolution and the '__directory__' sentinel (the post-gate services list; active
 -- rows only, scalars only) are the only workspace-less tenant reads. Once a slug is resolved, the
 -- server replaces it with a workspace-bound signed context before accessing children or bookings.

@@ -141,3 +141,10 @@ export const knownClientInput = z.object({
 export const KNOWN_CLIENT_IMPORT_MAX_ROWS = 5000;
 export const knownClientImportInput = z.object({ clients: z.array(z.unknown()).min(1).max(KNOWN_CLIENT_IMPORT_MAX_ROWS) }).strict();
 export const blockedEmailInput = z.object({ email: clientEmail, reason: z.string().trim().max(200).optional() }).strict();
+// The Customers tab's bulk "Message selected" action. The HTML is admin-authored (single owner), so the
+// server trusts it rather than sanitising; the plain-text part is derived at enqueue time.
+export const clientMessageInput = z.object({
+  subject: z.string().trim().min(1).max(200),
+  html: z.string().min(1).max(500_000),
+  clientIds: z.array(z.string().min(1).max(100)).min(1).max(2000),
+}).strict();

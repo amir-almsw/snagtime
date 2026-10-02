@@ -100,3 +100,5 @@ export type KnownClientInput = { name: string; email: string; phone?: string };
 export type KnownClientImportResult = { added: number; skipped: number; invalid: number };
 export type BlockedEmailEntry = { id: string; email: string; reason: string | null; createdAt: string; clientName: string | null };
 export type BlockEmailResult = { entry: BlockedEmailEntry; canceled: number; failed: number };
+export type ClientMessageInput = { subject: string; html: string; clientIds: string[] };
+export type ClientMessageResult = { queued: number; skippedBlocked: number; notFound: number };

@@ -8,7 +8,7 @@ import { systemEmailIdentity, validatedMailbox } from "@/server/email-config";
 import { structuredLog } from "@/server/observability";
 import { renderEmailHtml, renderEmailText, type EmailBody, type EmailBrand, type EmailSection } from "@/server/services/email-template";
 
-export type EmailKind = "EMAIL_VERIFY" | "PASSWORD_RESET" | "WORKSPACE_INVITATION" | "BOOKING_RECOVERY" | "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED" | "BOOKING_REMINDER";
+export type EmailKind = "EMAIL_VERIFY" | "PASSWORD_RESET" | "WORKSPACE_INVITATION" | "BOOKING_RECOVERY" | "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED" | "BOOKING_REMINDER" | "BULK_MESSAGE";
 export type EmailDelivery = { workspaceId: string; outboxId: string; idempotencyKey: string; recipientEmail: string; subject: string; text: string; html?: string; replyTo?: string };
 export interface EmailProvider { send(message: EmailDelivery, signal?: AbortSignal): Promise<void> }
 export const EMAIL_LEASE_MS = 60_000;
@@ -153,6 +153,15 @@ function bookingTime(startAt: string, timeZone: string) { return DateTime.fromIS
 
 async function render(row: { kind: string; workspaceId: string; bookingId: string | null; recipientEmail: string; subjectSnapshot: string; payloadJson: string }, at = new Date()) {
   const payload = JSON.parse(row.payloadJson) as Record<string, unknown>; const base = appBaseUrl();
+  if (row.kind === "BULK_MESSAGE") {
+    // The studio's own broadcast: already rendered at enqueue time (rich text or pasted HTML), with no
+    // booking to fence on and no action token to re-materialise. Nothing here can go stale, so the
+    // stored copy is delivered as-is.
+    const text = typeof payload.text === "string" ? payload.text : "";
+    const html = typeof payload.html === "string" ? payload.html : undefined;
+    if (!text) return null;
+    return { subject: row.subjectSnapshot, text, html };
+  }
   if (row.kind === "EMAIL_VERIFY" || row.kind === "PASSWORD_RESET") {
     const record = await db.accountActionToken.findUnique({ where: { id: String(payload.tokenId) } });
     if (!record || record.workspaceId !== row.workspaceId || record.email !== row.recipientEmail || record.consumedAt || record.revokedAt || record.expiresAt <= at) return null;
