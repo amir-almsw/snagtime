@@ -169,4 +169,5 @@ export const frontendApi = {
   listBlockedEmails: snagTimeApi.listBlockedEmails,
   blockEmail: snagTimeApi.blockEmail,
   unblockEmail: snagTimeApi.unblockEmail,
+  sendClientMessage: snagTimeApi.sendClientMessage,
 };
