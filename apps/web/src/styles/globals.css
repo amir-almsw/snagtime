@@ -353,3 +353,34 @@ body:has(.dvision) .theme-toggle{display:none}
 @media(max-width:820px){
   .customer-row.is-selectable{grid-template-columns:30px 1fr}
 }
+
+/* Booking shell safety net. The booking card is the whole content of the client page, so it has to
+   fit the screen on every phone and browser. Two things can break that: the card is sized with
+   calc(100% - 24px) of the page box, so if anything lays that box out wider than the visual viewport
+   -- an overflowing header control, a scrollbar, or a browser that resolves the percentage against a
+   wider box -- the card grows with it and is clipped off the right edge; and its inner grids use bare
+   1fr tracks, which refuse to shrink below their content, so one wide cell can push the layout out.
+   Cap the card against the viewport itself and let every track shrink below its content. Additive
+   only: the existing breakpoints are restated here with minmax(0, ...) so the cascade keeps the same
+   column counts, and max-width is the only property no earlier rule already sets. */
+.booking-shell{max-width:calc(100vw - 40px);grid-template-columns:minmax(0,360px) minmax(0,1fr)}
+.booking-info,.booking-flow{min-width:0}
+.duration-options{grid-template-columns:repeat(2,minmax(0,1fr))}
+.calendar-week{grid-template-columns:repeat(7,minmax(0,1fr))}
+.time-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:1120px){.booking-shell{grid-template-columns:minmax(0,320px) minmax(0,1fr)}}
+@media(max-width:820px){
+  .booking-shell{grid-template-columns:minmax(0,1fr);max-width:calc(100vw - 24px)}
+  .public-meta{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:540px){
+  .duration-options{grid-template-columns:minmax(0,1fr)}
+  .time-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .public-meta{grid-template-columns:minmax(0,1fr)}
+}
+/* The booking page never scrolls sideways. Anything that would stick out past the screen -- the
+   timezone select in the header is the usual one, because a native select sizes to its widest option
+   and the option list is every timezone -- is clipped instead of widening the page and dragging the
+   card off the right edge. Scoped with :has() so only the page that carries the booking card is
+   affected; `clip` rather than `hidden` so the surface stays a normal scrolling page. */
+.dvision.public-page:has(.booking-shell){overflow-x:clip}
