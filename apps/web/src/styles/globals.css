@@ -384,3 +384,17 @@ body:has(.dvision) .theme-toggle{display:none}
    card off the right edge. Scoped with :has() so only the page that carries the booking card is
    affected; `clip` rather than `hidden` so the surface stays a normal scrolling page. */
 .dvision.public-page:has(.booking-shell){overflow-x:clip}
+
+/* On phones the timezone UI is noise. The booking already follows the client's own browser timezone
+   (the picker only ever changes a display preference), so below the mobile breakpoint the picker and
+   the three labels that echo it are hidden rather than squeezing the header and the step headings.
+   The select stays in the DOM with its value intact -- React still posts the detected zone and the
+   slot list still renders in it -- it is only painted away, which also removes it from the tab order
+   and the accessibility tree on those screens. */
+@media(max-width:820px){
+  /* .dvision prefix, not !important: .public-meta span and .review-card dl>div both declare their own
+     display at a weight a bare class cannot beat. */
+  .dvision .header-timezone,.dvision .meta-timezone,.dvision .heading-timezone,.dvision .review-timezone{display:none}
+  /* The manage link's right margin exists only to sit beside the picker that is no longer there. */
+  .dvision .header-manage-link{margin-right:0}
+}
