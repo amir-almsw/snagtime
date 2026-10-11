@@ -56,21 +56,25 @@ export function weekBounds(anchor: string, weeksAhead = 0) {
   return { from: monday, to: shiftDateKey(monday, 6) };
 }
 
-// Adds a full-day off row for every date in the range. Time off wins: a date that had custom hours
-// loses them, and a date that was already off keeps its row, so no date ends up listed twice.
+// A date is fully off when an unavailable override carries no times. An unavailable override that
+// names both a start and an end is time off for just those hours (a "block").
+export const isFullDayOff = (item: AvailabilityOverride) => !item.isAvailable && (item.startMinute == null || item.endMinute == null);
+export const isHourBlock = (item: AvailabilityOverride) => !item.isAvailable && item.startMinute != null && item.endMinute != null;
+
+// Adds a full-day off row for every date in the range. A full day off wins over everything else on
+// its date, so custom hours and hour blocks there are dropped and the date is listed exactly once.
 export function addTimeOff(overrides: AvailabilityOverride[], from: string, to: string): AvailabilityOverride[] {
   const dates = expandDateRange(from, to);
   if (!dates.length) return overrides;
   const blocked = new Set(dates);
-  const kept = overrides.filter((item) => !item.isAvailable || !blocked.has(item.dateKey));
-  const alreadyOff = new Set(kept.filter((item) => !item.isAvailable).map((item) => item.dateKey));
-  return [...kept, ...dates.filter((date) => !alreadyOff.has(date)).map((dateKey) => ({ dateKey, isAvailable: false, startMinute: null, endMinute: null }))];
+  const kept = overrides.filter((item) => !blocked.has(item.dateKey));
+  return [...kept, ...dates.map((dateKey) => ({ dateKey, isAvailable: false, startMinute: null, endMinute: null }))];
 }
 
 // Consecutive off dates read back as one run, so a week's holiday is one row with one remove button.
 export type TimeOffRun = { from: string; to: string; days: number; dateKeys: string[] };
 export function timeOffRuns(overrides: AvailabilityOverride[]): TimeOffRun[] {
-  const dates = [...new Set(overrides.filter((item) => !item.isAvailable && isDateKey(item.dateKey)).map((item) => item.dateKey))].sort();
+  const dates = [...new Set(overrides.filter((item) => isFullDayOff(item) && isDateKey(item.dateKey)).map((item) => item.dateKey))].sort();
   const runs: TimeOffRun[] = [];
   for (const date of dates) {
     const run = runs.at(-1);
@@ -79,10 +83,71 @@ export function timeOffRuns(overrides: AvailabilityOverride[]): TimeOffRun[] {
   }
   return runs;
 }
+// Removes only the full-day rows of a run, leaving any hour block on the same dates in place.
 export function removeTimeOff(overrides: AvailabilityOverride[], run: TimeOffRun) {
   const dates = new Set(run.dateKeys);
-  return overrides.filter((item) => item.isAvailable || !dates.has(item.dateKey));
+  return overrides.filter((item) => !(isFullDayOff(item) && dates.has(item.dateKey)));
 }
+
+// ---- Time off for certain hours ------------------------------------------------------------------
+// Time off can also cover just an hour range on each date in a range. Those rows are unavailable
+// overrides that name a start and an end; the slot generator cuts them out of the day's hours.
+export type TimeOffBlock = { dateKey: string; startMinute: number; endMinute: number };
+export function partialTimeOffBlocks(overrides: AvailabilityOverride[]): TimeOffBlock[] {
+  return overrides
+    .filter((item) => isHourBlock(item) && isDateKey(item.dateKey))
+    .map((item) => ({ dateKey: item.dateKey, startMinute: item.startMinute!, endMinute: item.endMinute! }))
+    .sort((left, right) => left.dateKey.localeCompare(right.dateKey) || left.startMinute - right.startMinute);
+}
+
+// Consecutive dates blocked at the same times read back as one run, mirroring the full-day runs.
+export type TimeOffBlockRun = { from: string; to: string; days: number; startMinute: number; endMinute: number; dateKeys: string[] };
+export function hoursOffRuns(overrides: AvailabilityOverride[]): TimeOffBlockRun[] {
+  const runs: TimeOffBlockRun[] = [];
+  for (const block of partialTimeOffBlocks(overrides)) {
+    const run = runs.at(-1);
+    if (run && run.startMinute === block.startMinute && run.endMinute === block.endMinute && shiftDateKey(run.to, 1) === block.dateKey) {
+      run.to = block.dateKey; run.days += 1; run.dateKeys.push(block.dateKey);
+    } else runs.push({ from: block.dateKey, to: block.dateKey, days: 1, startMinute: block.startMinute, endMinute: block.endMinute, dateKeys: [block.dateKey] });
+  }
+  return runs;
+}
+
+// Blocks the same hours on every date in the range. A date already fully off is left alone, and an
+// identical block is not added twice.
+export function addHoursOff(overrides: AvailabilityOverride[], from: string, to: string, startMinute: number, endMinute: number): AvailabilityOverride[] {
+  const dates = expandDateRange(from, to);
+  if (!dates.length || endMinute <= startMinute) return overrides;
+  const alreadyOff = new Set(overrides.filter((item) => isFullDayOff(item)).map((item) => item.dateKey));
+  const existing = new Set(overrides.filter((item) => isHourBlock(item)).map((item) => `${item.dateKey}|${item.startMinute}|${item.endMinute}`));
+  const additions = dates
+    .filter((dateKey) => !alreadyOff.has(dateKey) && !existing.has(`${dateKey}|${startMinute}|${endMinute}`))
+    .map((dateKey) => ({ dateKey, isAvailable: false, startMinute, endMinute }));
+  return additions.length ? [...overrides, ...additions] : overrides;
+}
+
+export function removeHoursOff(overrides: AvailabilityOverride[], run: TimeOffBlockRun) {
+  const dates = new Set(run.dateKeys);
+  return overrides.filter((item) => !(isHourBlock(item) && dates.has(item.dateKey) && item.startMinute === run.startMinute && item.endMinute === run.endMinute));
+}
+
+// The editor flags a date only when its rows truly disagree: a full-day override sharing its date
+// with anything else, two available ranges that overlap, or two hour blocks that overlap. An
+// available range and a block on the same date is exactly how a lunch break is expressed, so it is
+// not a conflict.
+export function conflictingOverrideDates(overrides: AvailabilityOverride[]): Set<string> {
+  const overlaps = (rows: AvailabilityOverride[]) =>
+    rows.slice().sort((a, b) => (a.startMinute ?? 0) - (b.startMinute ?? 0)).some((item, index, sorted) => index > 0 && (sorted[index - 1]!.endMinute ?? 0) > (item.startMinute ?? 0));
+  const byDate = new Map<string, AvailabilityOverride[]>();
+  for (const item of overrides) byDate.set(item.dateKey, [...(byDate.get(item.dateKey) ?? []), item]);
+  const conflicting = new Set<string>();
+  for (const [dateKey, rows] of byDate) {
+    if (rows.some((item) => isFullDayOff(item)) && rows.length > 1) conflicting.add(dateKey);
+    else if (overlaps(rows.filter((item) => item.isAvailable)) || overlaps(rows.filter((item) => isHourBlock(item)))) conflicting.add(dateKey);
+  }
+  return conflicting;
+}
+
 
 // Rows dated before today can no longer affect a booking (minimum notice already hides the past), so
 // the editor drops them on save instead of letting the lists fill with history.

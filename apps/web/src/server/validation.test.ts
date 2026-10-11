@@ -17,10 +17,37 @@ describe("public input validation", () => {
     ] })).toThrow(/full-day unavailable/);
   });
 
+  it("accepts time off for certain hours alongside custom hours on the same date", () => {
+    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: [
+      { dateKey: "2026-08-24", isAvailable: true, startMinute: 540, endMinute: 1020 },
+      { dateKey: "2026-08-24", isAvailable: false, startMinute: 720, endMinute: 840 },
+    ] })).not.toThrow();
+  });
+
+  it("rejects a partial time-off block that is incomplete or backwards", () => {
+    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: [
+      { dateKey: "2026-08-24", isAvailable: false, startMinute: 720 },
+    ] })).toThrow(/valid start and end/);
+    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: [
+      { dateKey: "2026-08-24", isAvailable: false, startMinute: 840, endMinute: 720 },
+    ] })).toThrow(/valid start and end/);
+  });
+
+  it("rejects overlapping hour blocks and a full day off sharing its date with a block", () => {
+    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: [
+      { dateKey: "2026-08-24", isAvailable: false, startMinute: 720, endMinute: 840 },
+      { dateKey: "2026-08-24", isAvailable: false, startMinute: 800, endMinute: 900 },
+    ] })).toThrow(/blocks cannot overlap/);
+    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: [
+      { dateKey: "2026-08-24", isAvailable: false },
+      { dateKey: "2026-08-24", isAvailable: false, startMinute: 720, endMinute: 840 },
+    ] })).toThrow(/full-day unavailable/);
+  });
+
   it("accepts up to a year of per-date overrides and rejects more", () => {
     const rows = (count: number) => Array.from({ length: count }, (_, index) => ({ dateKey: new Date(Date.UTC(2026, 0, 1 + index)).toISOString().slice(0, 10), isAvailable: false }));
-    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: rows(366) })).not.toThrow();
-    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: rows(367) })).toThrow();
+    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: rows(1500) })).not.toThrow();
+    expect(() => availabilityInput.parse({ timeZone: "UTC", intervals: [], overrides: rows(1501) })).toThrow();
   });
 
   it("normalizes invitee email and rejects malformed booking input", () => {
