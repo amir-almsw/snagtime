@@ -306,6 +306,159 @@ easy to skip during development; skipping it is how `/api/gate` shipped permanen
 Nothing catches this locally, because the SQLite path uses the process-local limiter, which has no
 allowlist and accepts any pair.
 
+## Updating a running deployment
+
+This is the update procedure for the live single-VPS instance (`CLAUDE.md` §Live deployment): Caddy in
+front of `web-book` (book.dvision.studio), `web-admin` (admin.dvision.studio), `worker` and PostgreSQL.
+The server keeps an untracked `production.env` and an untracked `compose.ops.yml` beside
+`compose.production.yml`. Run everything from the repository checkout on the VPS:
+
+```bash
+COMPOSE="docker compose --env-file production.env -f compose.production.yml -f compose.ops.yml"
+
+git fetch origin && git checkout <branch> && git pull --ff-only origin <branch>
+SHA=$(git rev-parse HEAD)
+
+# 1. Point the build identity at the new commit. The runtime refuses to start on a mismatch.
+for V in BOOK_BUILD_ID ADMIN_BUILD_ID; do
+  grep -q "^$V=" production.env && sed -i "s|^$V=.*|$V=$SHA|" production.env \
+    || printf '%s=%s\n' "$V" "$SHA" >> production.env
+done
+
+# 2. Rebuild all three application images, one at a time. The box is small; parallel builds OOM.
+$COMPOSE build web-book
+$COMPOSE build web-admin
+$COMPOSE build worker
+
+# 3. Recreate only the application containers.
+$COMPOSE up -d web-book web-admin worker
+```
+
+To roll back, check out the previous commit, point both `*_BUILD_ID` values at it, and repeat steps 2
+and 3.
+
+### Rebuild all three services together, or none
+
+`BOOK_BUILD_ID` is the runtime `BUILD_ID` of **both** `web-book` and `worker`, and every image bakes its
+identity at build time (`NEXT_PUBLIC_APP_URL` for the two origins; the worker's `dist/worker.mjs` via
+`scripts/build-worker.mjs`). An image whose compiled identity differs from the `BUILD_ID` it is handed
+fails closed and crash-loops — `Restarting (1)`, with "Runtime build identity does not match the
+immutable compiled artifact identity." in the log:
+
+- `web-book` / `web-admin` — `scripts/container-entrypoint.mjs` reads `/app/apps/web/.next/BUILD_ID` and
+  refuses to listen.
+- `worker` — `apps/web/src/server/worker.ts` calls `assertCompiledBuildIdentity()` before connecting.
+  The entrypoint's check does not cover it, so a stale worker is the easiest one to miss.
+
+Bumping `BOOK_BUILD_ID` without rebuilding all three is exactly how the live site was taken down once:
+`web-book` matched while the `worker` image, built at an earlier commit, did not. Inspect what an image
+was actually built with:
+
+```bash
+docker run --rm --entrypoint cat snagtime-production-web-book  /app/apps/web/.next/BUILD_ID
+docker run --rm --entrypoint cat snagtime-production-web-admin /app/apps/web/.next/BUILD_ID
+docker run --rm --entrypoint sh  snagtime-production-worker \
+  -c "grep -oE '[a-f0-9]{40,64}' /app/dist/worker.mjs | sort -u"
+```
+
+### Use `docker compose build`, not the SHA-tagged `docker build`
+
+Step 4 of the first-time sequence builds `snagtime-book:"$SHA"` / `snagtime-admin:"$SHA"` and tags them
+explicitly. The live `compose.ops.yml` does **not** override `image:` for these services, so Compose names
+the images it builds after the project (`snagtime-production-web-book`, …) and never consumes the
+SHA-tagged ones. Running `docker build -t snagtime-book:"$SHA"` on this host therefore builds an image
+nothing runs, and `up -d` quietly keeps serving the old code. `docker compose build <service>` tags the
+image Compose actually uses, and takes `BUILD_ID` and `NEXT_PUBLIC_APP_URL` from the same `production.env`
+the containers read, so the compiled identity and the runtime `BUILD_ID` cannot drift apart.
+
+### The `migration` service installs a baseline; it does not migrate
+
+`docker compose --profile migration run --rm migration` feeds
+`prisma/postgresql/migrations/202608220100_production_baseline/migration.sql` to
+`psql --single-transaction -v ON_ERROR_STOP=1`. Against a database that already has the schema it stops
+on the first `CREATE TABLE` (`ERROR: relation "User" already exists`) and rolls the whole transaction
+back, so nothing changes and the command exits non-zero. It is a one-time installer for an empty
+database, not a step in a routine update.
+
+A schema change on a live database is `npm run db:migrate:postgres`
+(`prisma migrate deploy --schema prisma/postgresql/schema.prisma`), which tracks applied migrations and is
+safe to re-run. A release that ships no migration — such as the availability work that added hour-range
+time off — needs no database step at all.
+
+### PostgreSQL and Caddy are never rebuilt or restarted
+
+Neither carries application code, and `up -d web-book web-admin worker` names the three services
+explicitly, so the database and the ingress keep running throughout. Never reach for
+`docker compose down -v`: it removes the `postgres_data` volume and the database with it.
+
+### Verify an update
+
+```bash
+$COMPOSE ps
+docker inspect --format '{{.Name}}  {{.Config.Image}}  {{.State.Status}}' \
+  snagtime-production-web-book-1 snagtime-production-web-admin-1 snagtime-production-worker-1
+curl -fsS -o /dev/null -w 'book  ready: %{http_code}\n'  https://book.dvision.studio/api/health/ready
+curl -fsS -o /dev/null -w 'admin ready: %{http_code}\n' https://admin.dvision.studio/api/health/ready
+curl -s  -o /dev/null -w 'book  /dashboard: %{http_code}\n' https://book.dvision.studio/dashboard   # 404
+curl -s  -o /dev/null -w 'admin /gate:      %{http_code}\n' https://admin.dvision.studio/gate        # 404
+```
+
+A `ready` 200 on both origins proves more than "the containers started": `tempocove_readiness()` requires
+a fresh worker heartbeat, so the worker is polling and writing. The worker healthcheck carries a
+30-second `start_period`, so give `up -d` roughly that long before judging `ps`.
+
+### Two failure signatures worth recognising
+
+| Symptom | Cause |
+|---|---|
+| All three containers `Restarting (1)`; the log says "Runtime build identity does not match…" | An image was not rebuilt, or `production.env` was changed without rebuilding. Rebuild all three. |
+| Web containers `Up (unhealthy)` while the site serves normally; worker `Restarting` | `/api/health/ready` includes `tempocove_readiness()`, which needs a worker heartbeat, so a dead worker makes the web containers report unready. Visitors are unaffected. |
+
+### Checking the public booked-time read
+
+Public slots hide the host's appointments through the `tempocove_public_host_busy` definer function,
+which returns nothing unless the request carries a signed `public` context. To reproduce the app's own
+call by hand, apply the settings `installDatabaseContext` would set and then invoke it. `ctx_ok` **must**
+come back `t` — otherwise an empty result is meaningless. Run it inside the postgres container, where the
+owner password is mounted (`docker compose ... exec -T postgres sh`, `export PGPASSWORD="$(cat
+/run/secrets/postgres_owner_password)"`, then `psql -U tempocove_owner -d tempocove`), and use any
+published slug of the host under test:
+
+```sql
+\set slug 'haircut'
+select
+  set_config('tempocove.mode','public',false),
+  set_config('tempocove.workspace_id',(select "workspaceId" from "EventType" where slug=:'slug'),false),
+  set_config('tempocove.user_id','',false),
+  set_config('tempocove.session_hash','',false),
+  set_config('tempocove.subject',(select id from "EventType" where slug=:'slug'),false),
+  set_config('tempocove.action','public_read',false),
+  set_config('tempocove.signature', encode(hmac(
+     convert_to('v2','UTF8')||decode('00','hex')||convert_to('public','UTF8')||decode('00','hex')||
+     convert_to((select "workspaceId" from "EventType" where slug=:'slug'),'UTF8')||decode('00','hex')||
+     decode('00','hex')||decode('00','hex')||
+     convert_to((select id from "EventType" where slug=:'slug'),'UTF8')||decode('00','hex')||
+     convert_to('public_read','UTF8'),
+     convert_to((select secret from tempocove_context_authority where singleton),'UTF8'),'sha256'),'hex'),false);
+
+select tempocove_context_valid('public') as ctx_ok;
+select * from tempocove_public_host_busy(
+  (select id from "EventType" where slug=:'slug'), '2026-10-01'::timestamp, '2026-11-15'::timestamp);
+```
+
+`Booking` and `AvailabilityOverride` hold naive `timestamp` values in **UTC** (Prisma's Postgres mapping)
+and the app reads them back the same way, so the comparisons inside `generateSlots` line up; a booking
+that sits inside a weekday window of `AvailabilitySchedule` interpreted in `Europe/Amsterdam` is the
+quickest proof the offset is right. To confirm what is actually stored for time off:
+
+```sql
+select "dateKey","isAvailable","startMinute","endMinute"
+from "AvailabilityOverride" order by "dateKey","startMinute";
+```
+
+Full-day time off is an unavailable row with **null** times; hour-range time off is an unavailable row
+**with** times. Every override being null-time means no hour block was ever saved.
+
 ## Platform notes
 
 ### Vercel
