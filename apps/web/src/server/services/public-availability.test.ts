@@ -88,4 +88,21 @@ describe("public availability comes from the database", () => {
     expect(slots.some((slot) => slot.start === target.start)).toBe(false);
     expect(slots.length).toBeLessThan(before.length);
   });
+
+  // A partial-day time-off block only removes hours; it must never make an already-booked time bookable
+  // again. Before this test the block path was only covered at the generator level, not through the
+  // whole public read with real booked rows in play.
+  it("keeps hiding a booked appointment after an hour block is added to the same day", async () => {
+    const { event, duration } = await seededEvent(); const { from, to, anchor } = nextWeekdayWindow();
+    const before = await listPublicSlots(event.slug, from, to, "UTC", noProviderBusy, duration.id);
+    const target = before.find((slot) => new Date(slot.start).getTime() >= anchor.toMillis())!;
+    const booking = await bookAsAnotherClient(event, duration.id, new Date(target.start), duration.durationMinutes);
+    const dateKey = DateTime.fromJSDate(booking.startAt, { zone: "utc" }).setZone("Europe/Amsterdam").toFormat("yyyy-LL-dd");
+    const override = await db.availabilityOverride.create({ data: { workspaceId: event.workspaceId, userId: event.ownerId, dateKey, isAvailable: false, startMinute: 12 * 60, endMinute: 13 * 60 } });
+    try {
+      const after = await listPublicSlots(event.slug, from, to, "UTC", noProviderBusy, duration.id);
+      expect(after.some((slot) => slot.start === target.start)).toBe(false);
+      expect(after.some((slot) => overlaps(slot, booking))).toBe(false);
+    } finally { await db.availabilityOverride.delete({ where: { id: override.id } }); }
+  });
 });

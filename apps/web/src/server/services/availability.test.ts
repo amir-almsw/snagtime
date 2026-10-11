@@ -86,4 +86,25 @@ describe("availability slot generation", () => {
     expect(weekly.map((slot) => slot.start)).toEqual(["2026-08-24T09:00:00.000Z", "2026-08-24T11:00:00.000Z"]);
     expect(custom.map((slot) => slot.start)).toEqual(weekly.map((slot) => slot.start));
   });
+
+  // A block restarts the 45-minute grid at the block's end, so the day gets start times it never had
+  // before. The busy check is absolute-time, not grid-relative, so a reshaped grid must still never
+  // offer a slot that partly overlaps an appointment: a booking 17:00-17:45 stays unbookable even when
+  // a block puts 17:15 on the grid.
+  it("never offers a slot overlapping a booking, even when a block reshapes the grid", () => {
+    const booked = { start: new Date("2026-08-24T17:00:00Z"), end: new Date("2026-08-24T17:45:00Z") };
+    const slots = generateSlots({
+      eventType: { ...eventType, durationMinutes: 45 },
+      schedule: { timeZone: "UTC", intervals: [{ dayOfWeek: 1, startMinute: 9 * 60, endMinute: 18 * 60 }], overrides: [
+        { dateKey: "2026-08-24", isAvailable: false, startMinute: 16 * 60 + 30, endMinute: 17 * 60 + 15 },
+      ] },
+      busy: [booked],
+      from: new Date("2026-08-24T00:00:00Z"), to: new Date("2026-08-25T00:00:00Z"),
+      now: new Date("2026-08-20T00:00:00Z"), outputTimeZone: "UTC",
+    });
+    // The block puts 17:15 on the grid (16:30-17:15 is cut out), and 17:15-18:00 would run into the
+    // appointment. It must not be offered, and nothing else may overlap the booking either.
+    expect(slots.some((slot) => slot.start === "2026-08-24T17:15:00.000Z")).toBe(false);
+    expect(slots.filter((slot) => new Date(slot.start) < booked.end && new Date(slot.end) > booked.start)).toEqual([]);
+  });
 });
