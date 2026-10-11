@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { availabilityInput } from "@/server/validation";
 import { mapAvailability, toAvailability } from "./api-adapter";
 import type { AvailabilityOverride } from "@/lib/contracts";
-import { addTimeOff, availabilitySaveResultIsCurrent, canMutateAvailability, dayCountLabel, expandDateRange, pruneExpiredOverrides, rangeDays, removeTimeOff, shiftDateKey, timeOffRunLabel, timeOffRuns, timeOptions, todayKey, weekBounds, windowEndOptions, windowStartOptions } from "./availability-editor-state";
+import { addHoursOff, addTimeOff, availabilitySaveResultIsCurrent, canMutateAvailability, conflictingOverrideDates, dayCountLabel, expandDateRange, hoursOffRuns, partialTimeOffBlocks, pruneExpiredOverrides, rangeDays, removeHoursOff, removeTimeOff, shiftDateKey, timeOffRunLabel, timeOffRuns, timeOptions, todayKey, weekBounds, windowEndOptions, windowStartOptions } from "./availability-editor-state";
 
 describe("availability editor safety state", () => {
   it("permits mutations only after the initial availability load succeeds", () => {
@@ -90,5 +90,50 @@ describe("time off ranges", () => {
 
   it("drops rows dated before today on save", () => {
     expect(pruneExpiredOverrides([off("2026-09-20"), custom("2026-09-21"), off("2026-09-22")], "2026-09-21").map((item) => item.dateKey)).toEqual(["2026-09-21", "2026-09-22"]);
+  });
+});
+
+describe("time off for certain hours", () => {
+  const off = (dateKey: string): AvailabilityOverride => ({ dateKey, isAvailable: false, startMinute: null, endMinute: null });
+  const block = (dateKey: string, startMinute: number, endMinute: number): AvailabilityOverride => ({ dateKey, isAvailable: false, startMinute, endMinute });
+  const custom = (dateKey: string): AvailabilityOverride => ({ dateKey, isAvailable: true, startMinute: 600, endMinute: 900 });
+
+  it("adds the same hour block to every date in the range and skips dates already off", () => {
+    const start = [off("2026-10-06")];
+    const result = addHoursOff(start, "2026-10-05", "2026-10-07", 720, 840);
+    expect(partialTimeOffBlocks(result)).toEqual([
+      { dateKey: "2026-10-05", startMinute: 720, endMinute: 840 },
+      { dateKey: "2026-10-07", startMinute: 720, endMinute: 840 },
+    ]);
+    // A second identical add is a no-op, and an empty or backwards time range is ignored.
+    expect(addHoursOff(result, "2026-10-05", "2026-10-05", 720, 840)).toBe(result);
+    expect(addHoursOff(start, "2026-10-05", "2026-10-05", 840, 720)).toBe(start);
+  });
+
+  it("groups consecutive dates blocked at the same times into one run and removes it whole", () => {
+    const overrides = [block("2026-10-05", 720, 840), block("2026-10-06", 720, 840), block("2026-10-07", 720, 840), block("2026-10-09", 720, 840), custom("2026-10-08")];
+    const runs = hoursOffRuns(overrides);
+    expect(runs.map(({ from, to, days, startMinute, endMinute }) => ({ from, to, days, startMinute, endMinute }))).toEqual([
+      { from: "2026-10-05", to: "2026-10-07", days: 3, startMinute: 720, endMinute: 840 },
+      { from: "2026-10-09", to: "2026-10-09", days: 1, startMinute: 720, endMinute: 840 },
+    ]);
+    expect(timeOffRunLabel(runs[0]!, "2026-09-21")).toBe("Mon, Oct 5 – Wed, Oct 7");
+    expect(removeHoursOff(overrides, runs[0]!).map((item) => item.dateKey)).toEqual(["2026-10-09", "2026-10-08"]);
+  });
+
+  it("keeps hour blocks out of the full-day runs and out of a run's remove", () => {
+    const overrides = [off("2026-10-05"), off("2026-10-06"), block("2026-10-07", 720, 840)];
+    const runs = timeOffRuns(overrides);
+    expect(runs.map(({ from, to, days }) => ({ from, to, days }))).toEqual([{ from: "2026-10-05", to: "2026-10-06", days: 2 }]);
+    expect(removeTimeOff(overrides, runs[0]!).map((item) => item.dateKey)).toEqual(["2026-10-07"]);
+    // A full day off still clears any hour block on its dates.
+    expect(addTimeOff([block("2026-10-07", 720, 840)], "2026-10-07", "2026-10-07")).toEqual([off("2026-10-07")]);
+  });
+
+  it("flags a date only when its overrides truly disagree", () => {
+    expect([...conflictingOverrideDates([custom("2026-10-05"), block("2026-10-05", 780, 840)])]).toEqual([]);
+    expect([...conflictingOverrideDates([off("2026-10-05"), block("2026-10-05", 780, 840)])]).toEqual(["2026-10-05"]);
+    expect([...conflictingOverrideDates([block("2026-10-05", 720, 840), block("2026-10-05", 800, 900)])]).toEqual(["2026-10-05"]);
+    expect([...conflictingOverrideDates([custom("2026-10-05"), custom("2026-10-05")])]).toEqual(["2026-10-05"]);
   });
 });

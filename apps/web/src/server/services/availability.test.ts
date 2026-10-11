@@ -65,4 +65,25 @@ describe("availability slot generation", () => {
     });
     expect(slots.map((slot) => slot.start)).toEqual(["2026-08-25T10:00:00.000Z"]);
   });
+
+  // Time off for part of a day is an unavailable override that names its hours: it is cut out of
+  // whatever the day's hours would otherwise be, whether those are the weekly hours or custom hours.
+  it("cuts an hour block out of the day's weekly hours and out of a custom-hours override", () => {
+    const block = { dateKey: "2026-08-24", isAvailable: false, startMinute: 10 * 60, endMinute: 11 * 60 };
+    const weekly = generateSlots({
+      eventType,
+      schedule: { timeZone: "UTC", intervals: [{ dayOfWeek: 1, startMinute: 9 * 60, endMinute: 12 * 60 }], overrides: [block] },
+      busy: [], from: new Date("2026-08-24T00:00:00Z"), to: new Date("2026-08-25T00:00:00Z"),
+      now: new Date("2026-08-20T00:00:00Z"), outputTimeZone: "UTC",
+    });
+    const custom = generateSlots({
+      eventType,
+      schedule: { timeZone: "UTC", intervals: [], overrides: [block, { dateKey: "2026-08-24", isAvailable: true, startMinute: 9 * 60, endMinute: 12 * 60 }] },
+      busy: [], from: new Date("2026-08-24T00:00:00Z"), to: new Date("2026-08-25T00:00:00Z"),
+      now: new Date("2026-08-20T00:00:00Z"), outputTimeZone: "UTC",
+    });
+    // 09:00-12:00 in 30-minute slots on the 45-minute grid, minus the 10:00-11:00 block.
+    expect(weekly.map((slot) => slot.start)).toEqual(["2026-08-24T09:00:00.000Z", "2026-08-24T11:00:00.000Z"]);
+    expect(custom.map((slot) => slot.start)).toEqual(weekly.map((slot) => slot.start));
+  });
 });

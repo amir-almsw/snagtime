@@ -33,6 +33,33 @@ export function mergeBusyIntervals(busy: BusyInterval[]): BusyInterval[] {
   return merged;
 }
 
+// A date can carry overrides that only block certain hours -- time off for part of a day. An
+// unavailable override that names a start and an end is cut out of whatever the day's hours would
+// otherwise be, so a 12:00-14:00 block leaves the morning and the afternoon bookable. Unavailable
+// overrides without times still close the whole day (handled by the caller before this runs).
+export function blockOutIntervals(
+  intervals: AvailabilityInterval[],
+  blocked: Array<{ startMinute: number; endMinute: number }>,
+): AvailabilityInterval[] {
+  if (!blocked.length) return intervals;
+  const cuts = blocked
+    .filter((item) => item.endMinute > item.startMinute)
+    .sort((left, right) => left.startMinute - right.startMinute);
+  const result: AvailabilityInterval[] = [];
+  for (const interval of intervals) {
+    let cursor = interval.startMinute;
+    for (const cut of cuts) {
+      if (cut.endMinute <= cursor) continue;
+      if (cut.startMinute >= interval.endMinute) break;
+      if (cut.startMinute > cursor) result.push({ dayOfWeek: interval.dayOfWeek, startMinute: cursor, endMinute: Math.min(cut.startMinute, interval.endMinute) });
+      cursor = Math.max(cursor, cut.endMinute);
+      if (cursor >= interval.endMinute) break;
+    }
+    if (cursor < interval.endMinute) result.push({ dayOfWeek: interval.dayOfWeek, startMinute: cursor, endMinute: interval.endMinute });
+  }
+  return result;
+}
+
 export function generateSlots({
   eventType, schedule, busy, from, to, now = new Date(), outputTimeZone,
 }: {
@@ -66,9 +93,12 @@ export function generateSlots({
     const dayOfWeek = day.weekday % 7;
     const dateKey = day.toFormat("yyyy-LL-dd");
     const dayOverrides = (schedule.overrides ?? []).filter((item) => item.dateKey === dateKey);
-    const dayIntervals = dayOverrides.length
-      ? dayOverrides.some((item) => !item.isAvailable) ? [] : dayOverrides.filter((item) => item.isAvailable && item.startMinute != null && item.endMinute != null).map((item) => ({ dayOfWeek, startMinute: item.startMinute!, endMinute: item.endMinute! }))
-      : schedule.intervals.filter((item) => item.dayOfWeek === dayOfWeek);
+    const customHours = dayOverrides.filter((item) => item.isAvailable && item.startMinute != null && item.endMinute != null);
+    const blocked = dayOverrides.filter((item) => !item.isAvailable && item.startMinute != null && item.endMinute != null).map((item) => ({ startMinute: item.startMinute!, endMinute: item.endMinute! }));
+    // An unavailable override without times closes the day outright; a partial block is cut out below.
+    const fullDayOff = dayOverrides.some((item) => !item.isAvailable && (item.startMinute == null || item.endMinute == null));
+    const baseIntervals = fullDayOff ? [] : customHours.length ? customHours.map((item) => ({ dayOfWeek, startMinute: item.startMinute!, endMinute: item.endMinute! })) : schedule.intervals.filter((item) => item.dayOfWeek === dayOfWeek);
+    const dayIntervals = blockOutIntervals(baseIntervals, blocked);
     for (const availability of dayIntervals) {
       let cursor = day.plus({ minutes: availability.startMinute });
       const intervalEnd = day.plus({ minutes: availability.endMinute });
@@ -138,9 +168,11 @@ export async function setAvailability(workspaceId: string, userId: string, input
       })) });
     }
     await tx.availabilityOverride.deleteMany({ where: { workspaceId, userId } });
+    // Times are kept on unavailable rows too: a start and an end on an unavailable override means
+    // time off for those hours only, and no times means the whole day is off.
     if (input.overrides?.length) await tx.availabilityOverride.createMany({ data: input.overrides.map((item) => ({
       workspaceId, userId, dateKey: item.dateKey, isAvailable: item.isAvailable,
-      startMinute: item.isAvailable ? item.startMinute : null, endMinute: item.isAvailable ? item.endMinute : null,
+      startMinute: item.startMinute ?? null, endMinute: item.endMinute ?? null,
     })) });
     // The profile row is the one statement here that is not availability: app_user_update demands
     // action='account_write', so under this transaction's availability_write tag it would match no

@@ -61,8 +61,15 @@ export const availabilityInput = z.object({
     if (value.isAvailable && (value.startMinute == null || value.endMinute == null || value.endMinute <= value.startMinute)) {
       context.addIssue({ code: "custom", message: "Available overrides need a valid start and end.", path: ["startMinute"] });
     }
-  // One row per date: a season of time off plus custom-hour days must fit, and a year is the ceiling.
-  })).max(366).default([]),
+    // An unavailable override either closes the whole day (no times) or blocks the hours it names,
+    // so partial time off must carry a complete, non-empty range.
+    const hasTimes = value.startMinute != null || value.endMinute != null;
+    if (!value.isAvailable && hasTimes && (value.startMinute == null || value.endMinute == null || value.endMinute <= value.startMinute)) {
+      context.addIssue({ code: "custom", message: "Time off for part of a day needs a valid start and end.", path: ["startMinute"] });
+    }
+  // A year of full-day time off is 366 rows; hour blocks add a few more on the same dates, so the
+  // array is capped higher while still bounding a mistyped range.
+  })).max(1500).default([]),
 }).superRefine((value, context) => {
   for (const day of Array.from({ length: 7 }, (_, index) => index)) {
     const intervals = value.intervals.filter((item) => item.dayOfWeek === day).sort((a, b) => a.startMinute - b.startMinute);
@@ -72,13 +79,15 @@ export const availabilityInput = z.object({
       }
     });
   }
+  const hasOverlap = (rows: Array<{ startMinute?: number | null; endMinute?: number | null }>) =>
+    rows.slice().sort((a, b) => (a.startMinute ?? 0) - (b.startMinute ?? 0)).some((item, index, sorted) => index > 0 && (sorted[index - 1]!.endMinute ?? 0) > (item.startMinute ?? 0));
   for (const dateKey of new Set(value.overrides.map((item) => item.dateKey))) {
     const dateRows = value.overrides.filter((item) => item.dateKey === dateKey);
-    if (dateRows.some((item) => !item.isAvailable) && dateRows.some((item) => item.isAvailable)) context.addIssue({ code: "custom", message: "A full-day unavailable override cannot be combined with available hours.", path: ["overrides"] });
-    const intervals = dateRows.filter((item) => item.isAvailable).sort((a, b) => (a.startMinute ?? 0) - (b.startMinute ?? 0));
-    intervals.forEach((item, index) => {
-      if (index > 0 && (intervals[index - 1]!.endMinute ?? 0) > (item.startMinute ?? 0)) context.addIssue({ code: "custom", message: "Availability overrides cannot overlap.", path: ["overrides"] });
-    });
+    // A full-day unavailable override (no times) owns the date and cannot share it with anything else.
+    const fullDayOff = dateRows.some((item) => !item.isAvailable && (item.startMinute == null || item.endMinute == null));
+    if (fullDayOff && dateRows.length > 1) context.addIssue({ code: "custom", message: "A full-day unavailable override cannot be combined with other overrides.", path: ["overrides"] });
+    if (hasOverlap(dateRows.filter((item) => item.isAvailable))) context.addIssue({ code: "custom", message: "Availability overrides cannot overlap.", path: ["overrides"] });
+    if (hasOverlap(dateRows.filter((item) => !item.isAvailable && item.startMinute != null && item.endMinute != null))) context.addIssue({ code: "custom", message: "Time off blocks cannot overlap.", path: ["overrides"] });
   }
 });
 
