@@ -94,15 +94,19 @@ async function studioNotificationMailbox(client: MailboxReader, workspaceId: str
 }
 
 export async function enqueueBookingEmail(tx: Transaction, booking: BookingEmailSnapshot, kind: "BOOKING_CONFIRMED" | "BOOKING_RESCHEDULED" | "BOOKING_CANCELLED", now = new Date()) {
-  await tx.bookingRecoveryToken.updateMany({ where: { bookingId: booking.id, consumedAt: null, revokedAt: null }, data: { revokedAt: now } });
-  const expiresAt = new Date(Math.max(now.getTime() + 7 * 24 * 60 * 60_000, booking.endAt.getTime() + 30 * 24 * 60 * 60_000));
-  const id = randomBytes(18).toString("base64url"); const binding = bookingTokenBinding(booking.workspaceId, booking.id, booking.inviteeEmail.toLowerCase());
-  const authority = createActionToken("BOOKING_RECOVERY", binding, id);
-  await tx.bookingRecoveryToken.create({ data: { id, workspaceId: booking.workspaceId, bookingId: booking.id, email: booking.inviteeEmail.toLowerCase(), tokenHash: authority.tokenHash, expiresAt } });
-  const action = kind === "BOOKING_CANCELLED" ? "Your appointment is canceled" : kind === "BOOKING_RESCHEDULED" ? "Your appointment has moved" : "You’re booked";
-  await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: booking.inviteeEmail, subject: `${action}: ${booking.eventTitleSnapshot}`,
-    payload: clientPayload(booking, id),
-    idempotencyKey: `email:booking:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion });
+  // A studio booking made without a client email has no address to confirm and no meaningful manage
+  // link, so the client message is skipped entirely. The studio's own notice below still goes out.
+  if (booking.inviteeEmail) {
+    await tx.bookingRecoveryToken.updateMany({ where: { bookingId: booking.id, consumedAt: null, revokedAt: null }, data: { revokedAt: now } });
+    const expiresAt = new Date(Math.max(now.getTime() + 7 * 24 * 60 * 60_000, booking.endAt.getTime() + 30 * 24 * 60 * 60_000));
+    const id = randomBytes(18).toString("base64url"); const binding = bookingTokenBinding(booking.workspaceId, booking.id, booking.inviteeEmail.toLowerCase());
+    const authority = createActionToken("BOOKING_RECOVERY", binding, id);
+    await tx.bookingRecoveryToken.create({ data: { id, workspaceId: booking.workspaceId, bookingId: booking.id, email: booking.inviteeEmail.toLowerCase(), tokenHash: authority.tokenHash, expiresAt } });
+    const action = kind === "BOOKING_CANCELLED" ? "Your appointment is canceled" : kind === "BOOKING_RESCHEDULED" ? "Your appointment has moved" : "You’re booked";
+    await enqueueEmail(tx, { workspaceId: booking.workspaceId, bookingId: booking.id, kind, recipientEmail: booking.inviteeEmail, subject: `${action}: ${booking.eventTitleSnapshot}`,
+      payload: clientPayload(booking, id),
+      idempotencyKey: `email:booking:${kind}:${booking.id}:${booking.mutationVersion}`, bookingMutationVersion: booking.mutationVersion });
+  }
   const host = await tx.user.findUnique({ where: { id: booking.hostId }, select: { email: true, timeZone: true } });
   if (host) {
     const organizerAction = kind === "BOOKING_CANCELLED" ? "Appointment canceled" : kind === "BOOKING_RESCHEDULED" ? "Appointment moved" : "New appointment";
@@ -119,6 +123,7 @@ export function bookingReminderLeadMs() {
 }
 // Scheduled delivery rides the existing claim query: a future nextAttemptAt is simply not picked up until due.
 export async function enqueueBookingReminder(tx: Transaction, booking: BookingEmailSnapshot, now = new Date()) {
+  if (!booking.inviteeEmail) return; // No address to remind.
   const sendAt = new Date(booking.startAt.getTime() - bookingReminderLeadMs());
   // Under one hour of lead the confirmation email IS the reminder; enqueueing would fire it immediately after.
   if (sendAt.getTime() <= now.getTime() + 60 * 60_000) return;
@@ -184,7 +189,9 @@ async function render(row: { kind: string; workspaceId: string; bookingId: strin
     const expected = await studioNotificationMailbox(db, row.workspaceId, booking.host.email);
     if (expected.toLowerCase() !== row.recipientEmail.toLowerCase()) return null;
     const action = row.kind === "BOOKING_CANCELLED" ? "canceled" : row.kind === "BOOKING_RESCHEDULED" ? "moved" : "booked";
-    return { subject: row.subjectSnapshot, text: `${String(payload.inviteeName)} (${String(payload.inviteeEmail)}) ${action} ${String(payload.eventTitle)}. ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Open in your dashboard: ${base}/bookings?selected=${encodeURIComponent(row.bookingId)}`, replyTo: String(payload.inviteeEmail) };
+    const inviteeEmail = String(payload.inviteeEmail ?? "").trim();
+    const inviteeLabel = inviteeEmail ? `${String(payload.inviteeName)} (${inviteeEmail})` : `${String(payload.inviteeName)} (no email on file)`;
+    return { subject: row.subjectSnapshot, text: `${inviteeLabel} ${action} ${String(payload.eventTitle)}. ${bookingTime(String(payload.startAt), String(payload.timeZone))}.${priceLine(payload)} Open in your dashboard: ${base}/bookings?selected=${encodeURIComponent(row.bookingId)}`, replyTo: inviteeEmail || undefined };
   }
   const recovery = await db.bookingRecoveryToken.findUnique({ where: { id: String(payload.recoveryTokenId) } });
   if (!recovery || recovery.workspaceId !== row.workspaceId || recovery.bookingId !== row.bookingId || recovery.email !== row.recipientEmail || recovery.consumedAt || recovery.revokedAt || recovery.expiresAt <= at) return null;

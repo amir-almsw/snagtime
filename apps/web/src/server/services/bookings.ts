@@ -203,12 +203,15 @@ export async function createBooking(
     return prior;
   }
   // Checked after the idempotent replay above, so a client blacklisted after booking still gets their own
-  // earlier answer back, and before anything else, so a refused address costs no slot lookup.
-  if (await withDatabaseTransactionRetry(() => emailIsBlocked(eventType.workspaceId, input.inviteeEmail))) {
-    throw new AppError("EMAIL_BLOCKED", options.byStudio ? "This email is on the studio’s blacklist. Remove it under Customers to book it in." : "This email address can’t be used to book online. Please contact the studio.", 403);
+  // earlier answer back, and before anything else, so a refused address costs no slot lookup. A studio
+  // booking made with no email has nothing to blacklist or dedupe against, so both checks are skipped.
+  if (input.inviteeEmail) {
+    if (await withDatabaseTransactionRetry(() => emailIsBlocked(eventType.workspaceId, input.inviteeEmail))) {
+      throw new AppError("EMAIL_BLOCKED", options.byStudio ? "This email is on the studio’s blacklist. Remove it under Customers to book it in." : "This email address can’t be used to book online. Please contact the studio.", 403);
+    }
+    const existing = options.allowSecondActiveBooking ? null : await withDatabaseTransactionRetry(() => activeBookingIdForEmail(eventType.workspaceId, input.inviteeEmail));
+    if (existing) throw activeBookingConflict(existing);
   }
-  const existing = options.allowSecondActiveBooking ? null : await withDatabaseTransactionRetry(() => activeBookingIdForEmail(eventType.workspaceId, input.inviteeEmail));
-  if (existing) throw activeBookingConflict(existing);
   const duration = input.durationId ? eventType.durations.find((item) => item.id === input.durationId) : eventType.durations.find((item) => item.isDefault);
   if (!duration) throw notFound("Duration option");
   const answerMap = new Map((input.answers ?? []).map((answer) => [answer.questionId, answer.value]));

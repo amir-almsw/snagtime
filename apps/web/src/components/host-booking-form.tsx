@@ -88,7 +88,7 @@ export function HostBookingForm({ services, timeZone, onClose, onCreated, initia
   const selectedDay = days.find((day) => day.key === selectedDate);
   const selectedView = slotViews.find(({ slot }) => slot.start === selectedStart);
   const questions = service?.questions ?? [];
-  const complete = Boolean(service && duration && selectedStart) && name.trim().length >= 2 && name.trim().length <= 120 && validEmail(email) && questions.every((question) => answerComplete(question, answers));
+  const complete = Boolean(service && duration && selectedStart) && name.trim().length >= 2 && name.trim().length <= 120 && (!email.trim() || validEmail(email)) && questions.every((question) => answerComplete(question, answers));
 
   function chooseService(id: string) {
     const next = services.find((item) => item.id === id);
@@ -156,7 +156,7 @@ export function HostBookingForm({ services, timeZone, onClose, onCreated, initia
               ? <div className="booking-calendar"><div className="calendar-week">{visibleDays.map((day) => <button type="button" key={day.key} className={selectedDate === day.key ? "is-selected" : ""} aria-pressed={selectedDate === day.key} onClick={() => { setSelectedDate(day.key); setSelectedStart(""); }}><span>{day.weekday}</span><strong>{day.day}</strong><i>{day.month}</i></button>)}</div><div className="time-grid-scroll" role="region" aria-label={`Open times on ${selectedDay?.label ?? "the selected date"}`} tabIndex={0}><div className="time-grid">{daySlots.map(({ slot, time }) => <button type="button" key={slot.start} className={selectedStart === slot.start ? "is-selected" : ""} aria-pressed={selectedStart === slot.start} onClick={() => { setSelectedStart(slot.start); setError(""); setNotice(""); }}>{time}{selectedStart === slot.start && <Icon name="check" size={15} />}</button>)}</div></div></div>
               : <div className="empty-state"><span className="empty-icon"><Icon name="calendar" /></span><h3>No open times</h3><p>Nothing is free for this service in its booking window.</p></div>}
           <Field label="Client name" required><input value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" minLength={2} maxLength={120} /></Field>
-          <Field label="Client email" required hint="Their confirmation, reminder, and manage link go here."><input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="off" type="email" /></Field>
+          <Field label="Client email" hint="Leave blank if you only have their name — no confirmation, reminder, or manage link will be sent."><input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="off" type="email" placeholder="name@example.com" /></Field>
           {questions.map((question) => <Field key={question.id ?? question.label} label={question.label} required={question.required}>
             {question.kind === "CHECKBOX"
               ? <input type="checkbox" checked={Boolean(question.id && answers[question.id])} onChange={(event) => question.id && setAnswers((current) => ({ ...current, [question.id!]: event.target.checked }))} />

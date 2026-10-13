@@ -64,6 +64,14 @@ describe("public input validation", () => {
     expect(hostBookingInput.parse({ ...base, eventTypeId: "evt_1" })).toMatchObject({ eventTypeId: "evt_1", inviteeEmail: "ada@example.com" });
   });
 
+  it("lets the studio book a client with a name only, while the public page still needs an email", () => {
+    const base = { startAt: "2026-08-24T14:00:00.000Z", inviteeName: "Ada Lovelace", inviteeTimeZone: "UTC", eventTypeId: "evt_1" };
+    expect(hostBookingInput.parse({ ...base, inviteeEmail: "" })).toMatchObject({ inviteeEmail: "" });
+    expect(hostBookingInput.parse({ ...base, inviteeEmail: "  ADA@EXAMPLE.COM " })).toMatchObject({ inviteeEmail: "ada@example.com" });
+    expect(() => hostBookingInput.parse({ ...base, inviteeEmail: "not-an-email" })).toThrow(/valid email/);
+    expect(() => bookingInput.parse({ startAt: "2026-08-24T14:00:00.000Z", inviteeName: "Ada Lovelace", inviteeEmail: "", inviteeTimeZone: "UTC" })).toThrow();
+  });
+
   it("requires safe public booking slugs and testable pricing", () => {
     const base = { name: "Strategy Call", slug: "strategy-call", description: null, durationMinutes: 30, color: "#2563EB", locationType: "GOOGLE_MEET", locationValue: null, isActive: true, bufferBeforeMinutes: 0, bufferAfterMinutes: 0, minimumNoticeMinutes: 120, bookingWindowDays: 60, priceCents: 0, currency: "usd" };
     expect(eventTypeInput.parse(base).slug).toBe("strategy-call");

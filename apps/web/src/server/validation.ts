@@ -104,7 +104,13 @@ export const bookingInput = z.object({
 // The organizer books on behalf of a client from the dashboard. Same shape as a public booking plus
 // the event type, which is resolved inside the caller's own workspace before the slug reaches
 // createBooking -- a globally unique slug must never let one workspace book into another's calendar.
-export const hostBookingInput = bookingInput.extend({ eventTypeId: z.string().min(1).max(100) });
+// The organizer can book a client in with just a name: some clients are only known over other
+// channels, so the email is optional here (unlike the public page). An empty string books the
+// appointment without a client confirmation, reminder, or manage link.
+export const hostBookingInput = bookingInput.omit({ inviteeEmail: true }).extend({
+  eventTypeId: z.string().min(1).max(100),
+  inviteeEmail: z.string().trim().toLowerCase().refine((value) => value === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), "Use a valid email address."),
+});
 
 export const demoLoginInput = z.object({ email: z.email().transform((value) => value.toLowerCase()), password: z.string().min(1).max(200) });
 export const clientGateInput = z.object({ password: z.string().min(1).max(200) }).strict();
