@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { availabilityInput } from "@/server/validation";
 import { mapAvailability, toAvailability } from "./api-adapter";
 import type { AvailabilityOverride } from "@/lib/contracts";
-import { addHoursOff, addTimeOff, availabilitySaveResultIsCurrent, canMutateAvailability, conflictingOverrideDates, dayCountLabel, expandDateRange, hoursOffRuns, partialTimeOffBlocks, pruneExpiredOverrides, rangeDays, removeHoursOff, removeTimeOff, shiftDateKey, timeOffRunLabel, timeOffRuns, timeOptions, todayKey, weekBounds, windowEndOptions, windowStartOptions } from "./availability-editor-state";
+import { addHoursOff, addOpenDate, addTimeOff, availabilitySaveResultIsCurrent, canMutateAvailability, conflictingOverrideDates, dayCountLabel, expandDateRange, hoursOffRuns, partialTimeOffBlocks, pruneExpiredOverrides, rangeDays, removeHoursOff, removeTimeOff, shiftDateKey, timeOffRunLabel, timeOffRuns, timeOptions, todayKey, usualStudioHours, weekBounds, windowEndOptions, windowStartOptions } from "./availability-editor-state";
 
 describe("availability editor safety state", () => {
   it("permits mutations only after the initial availability load succeeds", () => {
@@ -135,5 +135,27 @@ describe("time off for certain hours", () => {
     expect([...conflictingOverrideDates([off("2026-10-05"), block("2026-10-05", 780, 840)])]).toEqual(["2026-10-05"]);
     expect([...conflictingOverrideDates([block("2026-10-05", 720, 840), block("2026-10-05", 800, 900)])]).toEqual(["2026-10-05"]);
     expect([...conflictingOverrideDates([custom("2026-10-05"), custom("2026-10-05")])]).toEqual(["2026-10-05"]);
+  });
+});
+
+describe("opening a normally-closed date", () => {
+  const off = (dateKey: string): AvailabilityOverride => ({ dateKey, isAvailable: false, startMinute: null, endMinute: null });
+  const block = (dateKey: string, startMinute: number, endMinute: number): AvailabilityOverride => ({ dateKey, isAvailable: false, startMinute, endMinute });
+
+  it("derives the studio's usual hours from its enabled weekly days", () => {
+    const days = [
+      { day: "Monday", short: "Mon", enabled: false, windows: [] },
+      { day: "Tuesday", short: "Tue", enabled: true, windows: [{ id: "t1", start: "10:00 AM", end: "2:00 PM" }, { id: "t2", start: "3:00 PM", end: "6:00 PM" }] },
+      { day: "Wednesday", short: "Wed", enabled: true, windows: [{ id: "w1", start: "9:00 AM", end: "5:00 PM" }] },
+    ];
+    expect(usualStudioHours(days)).toEqual({ startMinute: 540, endMinute: 1080 });
+    expect(usualStudioHours(days.map((day) => ({ ...day, enabled: false })))).toEqual({ startMinute: 540, endMinute: 1020 });
+  });
+
+  it("replaces any override already on a date with a single available override", () => {
+    const opened = addOpenDate([off("2026-10-05"), block("2026-10-06", 720, 840)], "2026-10-05", 540, 1020);
+    expect(opened).toEqual([block("2026-10-06", 720, 840), { dateKey: "2026-10-05", isAvailable: true, startMinute: 540, endMinute: 1020 }]);
+    // An empty or backwards window is ignored, leaving the day as it was.
+    expect(addOpenDate([off("2026-10-05")], "2026-10-05", 900, 840)).toEqual([off("2026-10-05")]);
   });
 });

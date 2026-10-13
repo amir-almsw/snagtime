@@ -1,5 +1,6 @@
 import type { AvailabilityOverride } from "@/lib/contracts";
 import { timeToMinutes } from "./api-adapter";
+import type { AvailabilityDay } from "./demo-data";
 
 export type AvailabilityLoadState = "loading" | "loaded" | "error";
 
@@ -129,6 +130,25 @@ export function addHoursOff(overrides: AvailabilityOverride[], from: string, to:
 export function removeHoursOff(overrides: AvailabilityOverride[], run: TimeOffBlockRun) {
   const dates = new Set(run.dateKeys);
   return overrides.filter((item) => !(isHourBlock(item) && dates.has(item.dateKey) && item.startMinute === run.startMinute && item.endMinute === run.endMinute));
+}
+
+// The studio's regular opening and closing times, read from its enabled weekly days. Opening a
+// normally-closed date defaults to these hours so the barber doesn't have to retype them; with no
+// weekly schedule at all it falls back to 09:00-17:00.
+export function usualStudioHours(days: AvailabilityDay[]) {
+  const windows = days.filter((day) => day.enabled).flatMap((day) => day.windows);
+  if (!windows.length) return { startMinute: 540, endMinute: 1020 };
+  const starts = windows.map((window) => timeToMinutes(window.start));
+  const ends = windows.map((window) => timeToMinutes(window.end));
+  return { startMinute: Math.min(...starts), endMinute: Math.max(...ends) };
+}
+
+// Opens a normally-closed date by replacing whatever overrides already touch it with a single
+// available override carrying the chosen hours. Mirrors addTimeOff, which replaces with a full-day off,
+// and clears an existing full-day off so an opened date never collides with it on save.
+export function addOpenDate(overrides: AvailabilityOverride[], dateKey: string, startMinute: number, endMinute: number): AvailabilityOverride[] {
+  if (!isDateKey(dateKey) || endMinute <= startMinute) return overrides;
+  return [...overrides.filter((item) => item.dateKey !== dateKey), { dateKey, isAvailable: true, startMinute, endMinute }];
 }
 
 // The editor flags a date only when its rows truly disagree: a full-day override sharing its date
