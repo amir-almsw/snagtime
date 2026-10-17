@@ -107,4 +107,20 @@ describe("availability slot generation", () => {
     expect(slots.some((slot) => slot.start === "2026-08-24T17:15:00.000Z")).toBe(false);
     expect(slots.filter((slot) => new Date(slot.start) < booked.end && new Date(slot.end) > booked.start)).toEqual([]);
   });
+
+  // A 30-minute gap between two bookings is bookable even though neither edge is on the 45-minute grid:
+  // a free stretch also starts at the end of each booked block, not just at time-off blocks.
+  it("fills a 30-minute gap between two bookings for a bufferless 30-minute service", () => {
+    const slots = generateSlots({
+      eventType,
+      schedule: { timeZone: "UTC", intervals: [{ dayOfWeek: 1, startMinute: 9 * 60, endMinute: 17 * 60 }] },
+      busy: [
+        { start: new Date("2026-08-24T09:00:00.000Z"), end: new Date("2026-08-24T10:00:00.000Z") },
+        { start: new Date("2026-08-24T10:30:00.000Z"), end: new Date("2026-08-24T11:30:00.000Z") },
+      ],
+      from: new Date("2026-08-24T00:00:00Z"), to: new Date("2026-08-25T00:00:00Z"),
+      now: new Date("2026-08-20T00:00:00Z"), outputTimeZone: "UTC",
+    });
+    expect(slots.map((slot) => slot.start)).toContain("2026-08-24T10:00:00.000Z");
+  });
 });

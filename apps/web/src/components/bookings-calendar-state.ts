@@ -1,4 +1,35 @@
+import type { DayGap } from "@/lib/contracts";
 import type { Booking } from "./demo-data";
+
+// A gap is shown only when it touches a booking on either side -- the leading stretch before the first
+// booking, a stretch between two, or the trailing stretch after the last. A fully open day has no
+// bookings to book around, so it yields no "+" buttons (the regular Add booking covers it). With every
+// service on zero buffers the buffered busy ranges equal the visible appointment times, so gap edges
+// line up exactly with booking starts and ends.
+export function relevantGaps(bookings: Booking[], gaps: DayGap[]): DayGap[] {
+  const starts = new Set(bookings.map((booking) => new Date(booking.startsAt).getTime()));
+  const ends = new Set(bookings.map((booking) => new Date(booking.startsAt).getTime() + booking.duration * 60_000));
+  return gaps.filter((gap) => {
+    const start = new Date(gap.start).getTime();
+    const end = new Date(gap.end).getTime();
+    return ends.has(start) || starts.has(end);
+  });
+}
+
+export type AgendaItem = { kind: "booking"; booking: Booking } | { kind: "gap"; gap: DayGap };
+
+// Bookings and the gaps around them, interleaved in start order for the day agenda.
+export function agendaItems(bookings: Booking[], gaps: DayGap[]): AgendaItem[] {
+  const items: AgendaItem[] = [
+    ...bookings.map((booking) => ({ kind: "booking" as const, booking })),
+    ...relevantGaps(bookings, gaps).map((gap) => ({ kind: "gap" as const, gap })),
+  ];
+  return items.sort((left, right) => {
+    const leftAt = left.kind === "booking" ? left.booking.startsAt : left.gap.start;
+    const rightAt = right.kind === "booking" ? right.booking.startsAt : right.gap.start;
+    return leftAt.localeCompare(rightAt) || (left.kind === "gap" ? 1 : -1);
+  });
+}
 
 export type CalendarMonth = { year: number; month: number };
 export type CalendarCell = { key: string; day: number } | null;

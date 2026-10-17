@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { DayGap } from "@/lib/contracts";
 import type { Booking, BookingStatus } from "./demo-data";
-import { countLabel, dayKey, dayLabel, firstDayKey, groupByDay, monthCells, monthLabel, monthOf, sameMonth, shiftMonth, weekdayHeadings, type CalendarMonth } from "./bookings-calendar-state";
+import { agendaItems, countLabel, dayKey, dayLabel, firstDayKey, groupByDay, monthCells, monthLabel, monthOf, sameMonth, shiftMonth, weekdayHeadings, type CalendarMonth } from "./bookings-calendar-state";
+import { frontendApi } from "./api-adapter";
 import { Icon } from "./icons";
 import { Badge, EmptyState } from "./ui";
 
@@ -14,17 +16,30 @@ const chipLimit = 3;
 // load, or a booking deep-linked from the dashboard -- so the barber's own navigation is never yanked
 // away mid-look. Every date is a civil date in the studio timezone; the browser's zone plays no part.
 // Canceled bookings never appear here: they only clutter a day the barber is planning around, and the
-// list layout still shows them for the record.
-export function BookingsCalendar({ bookings, timeZone, anchorDay, onOpen }: { bookings: Booking[]; timeZone: string; anchorDay: string; onOpen: (booking: Booking, trigger: HTMLButtonElement) => void }) {
+// list layout still shows them for the record. Free stretches of the selected day (longer than 15
+// minutes and touching a booking) get a "+" that opens the gap-fill form.
+export function BookingsCalendar({ bookings, timeZone, anchorDay, onOpen, onGapAdd, canManage }: { bookings: Booking[]; timeZone: string; anchorDay: string; onOpen: (booking: Booking, trigger: HTMLButtonElement) => void; onGapAdd: (gap: DayGap) => void; canManage: boolean }) {
   const [month, setMonth] = useState<CalendarMonth>(() => monthOf(anchorDay));
   const [selectedDay, setSelectedDay] = useState(anchorDay);
+  const [gaps, setGaps] = useState<DayGap[]>([]);
   const today = useMemo(() => dayKey(new Date(), timeZone), [timeZone]);
   const groups = useMemo(() => groupByDay(bookings.filter((booking) => booking.status !== "canceled"), timeZone), [bookings, timeZone]);
   const cells = useMemo(() => monthCells(month), [month]);
   const timeFormatter = useMemo(() => new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }), [timeZone]);
   const monthCount = cells.reduce((total, cell) => total + (cell ? groups.get(cell.key)?.length ?? 0 : 0), 0);
-  const dayBookings = groups.get(selectedDay) ?? [];
+  const dayBookings = useMemo(() => groups.get(selectedDay) ?? [], [groups, selectedDay]);
   const label = monthLabel(month);
+
+  useEffect(() => {
+    if (!canManage || selectedDay < today) return;
+    let active = true;
+    frontendApi.listDayGaps(selectedDay)
+      .then((items) => { if (active) setGaps(items); })
+      .catch(() => { if (active) setGaps([]); });
+    return () => { active = false; };
+  }, [canManage, selectedDay, today]);
+
+  const agenda = useMemo(() => agendaItems(dayBookings, canManage && selectedDay >= today ? gaps : []), [dayBookings, gaps, canManage, selectedDay, today]);
   // Moving months lands the agenda on today when it is in view, otherwise on the 1st, so what the
   // agenda shows is always a day of the month on screen.
   const showMonth = (next: CalendarMonth) => { setMonth(next); setSelectedDay(sameMonth(next, monthOf(today)) ? today : firstDayKey(next)); };
@@ -43,8 +58,10 @@ export function BookingsCalendar({ bookings, timeZone, anchorDay, onOpen }: { bo
       </div>
       <aside className="day-agenda" aria-label={`Bookings on ${dayLabel(selectedDay)}`}>
         <header><h3>{dayLabel(selectedDay)}</h3><span>{countLabel(dayBookings.length)}</span></header>
-        {dayBookings.map((booking) => <button type="button" key={booking.id} className={`agenda-row is-${booking.status}`} onClick={(event) => onOpen(booking, event.currentTarget)} aria-haspopup="dialog"><span className="agenda-time"><strong>{booking.timeLabel}</strong><small>{booking.duration} min</small></span><span className="agenda-body"><strong>{booking.invitee}</strong><small>{booking.eventTitle}</small></span><Badge tone={tones[booking.status]} dot>{booking.status === "pending" ? "pending payment" : booking.status}</Badge></button>)}
-        {dayBookings.length === 0 && <EmptyState icon="calendar" title="Nothing booked" description={selectedDay < today ? "No bookings were held on this day." : "This day is open."} />}
+        {agenda.map((item) => item.kind === "booking"
+          ? <button type="button" key={item.booking.id} className={`agenda-row is-${item.booking.status}`} onClick={(event) => onOpen(item.booking, event.currentTarget)} aria-haspopup="dialog"><span className="agenda-time"><strong>{item.booking.timeLabel}</strong><small>{item.booking.duration} min</small></span><span className="agenda-body"><strong>{item.booking.invitee}</strong><small>{item.booking.eventTitle}</small></span><Badge tone={tones[item.booking.status]} dot>{item.booking.status === "pending" ? "pending payment" : item.booking.status}</Badge></button>
+          : <button type="button" key={`gap-${item.gap.start}`} className="agenda-gap" onClick={() => onGapAdd(item.gap)} aria-label={`Book into the ${item.gap.minutes} minute gap at ${timeFormatter.format(new Date(item.gap.start))}`}><span className="agenda-gap-plus"><Icon name="plus" size={14} /></span><span className="agenda-gap-body"><strong>{item.gap.minutes} min free</strong><small>from {timeFormatter.format(new Date(item.gap.start))}</small></span></button>)}
+        {agenda.length === 0 && <EmptyState icon="calendar" title="Nothing booked" description={selectedDay < today ? "No bookings were held on this day." : "This day is open."} />}
       </aside>
     </div>
   </section>;

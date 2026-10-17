@@ -27,6 +27,9 @@ import type {
   BlockEmailResult,
   ClientMessageInput,
   ClientMessageResult,
+  DayGap,
+  StudioQuickService,
+  QuickBookingInput,
 } from "@/lib/contracts";
 
 export class SnagTimeApiError extends Error {
@@ -84,6 +87,9 @@ export const snagTimeApi = {
   getAvailability: () => request<AvailabilitySchedule>("/api/availability"),
   setAvailability: (schedule: AvailabilitySchedule) => request<AvailabilitySchedule>("/api/availability", { method: "PUT", body: JSON.stringify(schedule) }),
   listBookings: () => request<BookingSummary[]>("/api/bookings"),
+  listDayGaps: (date: string) => request<DayGap[]>(`/api/studio/day-gaps?date=${encodeURIComponent(date)}`),
+  getStudioQuickService: () => request<StudioQuickService>("/api/studio/quick-service"),
+  createQuickBooking: (input: QuickBookingInput, idempotencyKey = crypto.randomUUID()) => request<BookingSummary>("/api/studio/quick-service/bookings", { method: "POST", headers: { "idempotency-key": idempotencyKey }, body: JSON.stringify(input) }),
   createHostBooking: (input: HostBookingInput, idempotencyKey = crypto.randomUUID()) => request<BookingSummary>("/api/bookings", { method: "POST", headers: { "idempotency-key": idempotencyKey }, body: JSON.stringify(input) }),
   getHostSlots: (eventTypeId: string, from: string, to: string, timeZone: string, durationId?: string, signal?: AbortSignal) => request<BookingSlot[]>(`/api/event-types/${encodeURIComponent(eventTypeId)}/slots?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&timeZone=${encodeURIComponent(timeZone)}${durationId ? `&durationId=${encodeURIComponent(durationId)}` : ""}`, { signal }),
   enterClientGate: (password: string) => request<{ authorized: true }>("/api/gate", { method: "POST", body: JSON.stringify({ password }) }),

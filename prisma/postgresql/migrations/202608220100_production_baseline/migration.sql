@@ -73,6 +73,7 @@ CREATE TABLE "EventType" (
     "locationType" TEXT NOT NULL DEFAULT 'GOOGLE_MEET',
     "locationValue" TEXT,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "isPublic" BOOLEAN NOT NULL DEFAULT true,
     "bufferBeforeMinutes" INTEGER NOT NULL DEFAULT 0,
     "bufferAfterMinutes" INTEGER NOT NULL DEFAULT 0,
     "minimumNoticeMinutes" INTEGER NOT NULL DEFAULT 120,

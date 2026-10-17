@@ -60,6 +60,19 @@ export function blockOutIntervals(
   return result;
 }
 
+// The open hours a civil date actually has: the weekly intervals for its weekday, replaced by a
+// custom-hours override when one is set, with any partial time-off blocks cut out. A full-day
+// time-off override yields no hours. This is the same shaping generateSlots applies per day, pulled
+// out so the dashboard's gap list can answer "when is the studio actually open" the same way.
+export function dayOpenIntervals(schedule: AvailabilitySchedule, dateKey: string, dayOfWeek: number): AvailabilityInterval[] {
+  const dayOverrides = (schedule.overrides ?? []).filter((item) => item.dateKey === dateKey);
+  const customHours = dayOverrides.filter((item) => item.isAvailable && item.startMinute != null && item.endMinute != null);
+  const blocked = dayOverrides.filter((item) => !item.isAvailable && item.startMinute != null && item.endMinute != null).map((item) => ({ startMinute: item.startMinute!, endMinute: item.endMinute! }));
+  const fullDayOff = dayOverrides.some((item) => !item.isAvailable && (item.startMinute == null || item.endMinute == null));
+  const baseIntervals = fullDayOff ? [] : customHours.length ? customHours.map((item) => ({ dayOfWeek, startMinute: item.startMinute!, endMinute: item.endMinute! })) : schedule.intervals.filter((item) => item.dayOfWeek === dayOfWeek);
+  return blockOutIntervals(baseIntervals, blocked);
+}
+
 export function generateSlots({
   eventType, schedule, busy, from, to, now = new Date(), outputTimeZone,
 }: {
@@ -92,17 +105,24 @@ export function generateSlots({
   while (day <= finalDay) {
     const dayOfWeek = day.weekday % 7;
     const dateKey = day.toFormat("yyyy-LL-dd");
-    const dayOverrides = (schedule.overrides ?? []).filter((item) => item.dateKey === dateKey);
-    const customHours = dayOverrides.filter((item) => item.isAvailable && item.startMinute != null && item.endMinute != null);
-    const blocked = dayOverrides.filter((item) => !item.isAvailable && item.startMinute != null && item.endMinute != null).map((item) => ({ startMinute: item.startMinute!, endMinute: item.endMinute! }));
-    // An unavailable override without times closes the day outright; a partial block is cut out below.
-    const fullDayOff = dayOverrides.some((item) => !item.isAvailable && (item.startMinute == null || item.endMinute == null));
-    const baseIntervals = fullDayOff ? [] : customHours.length ? customHours.map((item) => ({ dayOfWeek, startMinute: item.startMinute!, endMinute: item.endMinute! })) : schedule.intervals.filter((item) => item.dayOfWeek === dayOfWeek);
-    const dayIntervals = blockOutIntervals(baseIntervals, blocked);
+    const dayIntervals = dayOpenIntervals(schedule, dateKey, dayOfWeek);
     for (const availability of dayIntervals) {
-      let cursor = day.plus({ minutes: availability.startMinute });
+      const intervalStart = day.plus({ minutes: availability.startMinute });
       const intervalEnd = day.plus({ minutes: availability.endMinute });
-      while (cursor.plus({ minutes: eventType.durationMinutes }) <= intervalEnd) {
+      const candidates = new Set<number>();
+      // The 45-minute grid is the studio's rhythm; a longer service swallows the next grid point.
+      for (let cursor = intervalStart; cursor.plus({ minutes: eventType.durationMinutes }) <= intervalEnd; cursor = cursor.plus({ minutes: SLOT_INTERVAL_MINUTES })) {
+        candidates.add(cursor.toMillis());
+      }
+      // Every free stretch also starts where a booked/buffered block ends, so the gap between two
+      // appointments (and the trailing stretch before close) is bookable even off the grid. The
+      // leading stretch already starts at the interval's own start, which is on the grid.
+      for (const busyInterval of busyIntervals) {
+        if (busyInterval.end > intervalStart.toMillis() && busyInterval.end < intervalEnd.toMillis()) candidates.add(busyInterval.end);
+      }
+      for (const candidateMs of [...candidates].sort((left, right) => left - right)) {
+        const cursor = DateTime.fromMillis(candidateMs, { zone });
+        if (cursor.plus({ minutes: eventType.durationMinutes }) > intervalEnd) continue;
         const start = cursor.toUTC();
         const end = cursor.plus({ minutes: eventType.durationMinutes }).toUTC();
         const occupiedStart = start.minus({ minutes: eventType.bufferBeforeMinutes }).toMillis();
@@ -118,7 +138,6 @@ export function generateSlots({
             currency: eventType.currency ?? "eur",
           });
         }
-        cursor = cursor.plus({ minutes: SLOT_INTERVAL_MINUTES });
       }
     }
     day = day.plus({ days: 1 });

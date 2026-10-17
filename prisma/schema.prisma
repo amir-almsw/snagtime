@@ -113,6 +113,9 @@ model EventType {
   locationType         String    @default("GOOGLE_MEET")
   locationValue        String?
   isActive             Boolean   @default(true)
+  // isPublic gates the client-facing booking page (book.dvision.studio). The studio's own "Quick
+  // appointment" service is isActive but not isPublic, so the dashboard can book it while clients never see it.
+  isPublic             Boolean   @default(true)
   bufferBeforeMinutes  Int       @default(0)
   bufferAfterMinutes   Int       @default(0)
   minimumNoticeMinutes Int       @default(120)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Booking } from "./demo-data";
-import { countLabel, dayKey, dayLabel, firstDayKey, groupByDay, monthCells, monthLabel, monthOf, sameMonth, shiftMonth } from "./bookings-calendar-state";
+import { agendaItems, countLabel, dayKey, dayLabel, firstDayKey, groupByDay, monthCells, monthLabel, monthOf, relevantGaps, sameMonth, shiftMonth } from "./bookings-calendar-state";
 
 function booking(id: string, startsAt: string): Booking {
   return { id, eventTypeId: "event", invitee: `Client ${id}`, email: `${id}@example.com`, eventTitle: "Haircut", startsAt, dateLabel: "", timeLabel: "", duration: 30, timezone: "Europe/Amsterdam", organizerTimeZone: "Europe/Amsterdam", status: "confirmed", hostName: "Host", notificationStatus: "LOCAL_NO_EMAIL", answers: [] };
@@ -52,5 +52,28 @@ describe("bookings calendar state", () => {
     expect([...groups.keys()]).toEqual(["2026-09-01", "2026-09-02"]);
     expect(groups.get("2026-09-01")?.map((item) => item.id)).toEqual(["first"]);
     expect(groups.get("2026-09-02")?.map((item) => item.id)).toEqual(["night", "early", "late"]);
+  });
+
+  it("keeps only the gaps that touch a booking on either side", () => {
+    const a = booking("a", "2026-09-01T10:00:00.000Z");
+    const b = booking("b", "2026-09-01T11:00:00.000Z");
+    const gaps = [
+      { start: "2026-09-01T09:00:00.000Z", end: "2026-09-01T10:00:00.000Z", minutes: 60 },
+      { start: "2026-09-01T10:30:00.000Z", end: "2026-09-01T11:00:00.000Z", minutes: 30 },
+      { start: "2026-09-01T11:30:00.000Z", end: "2026-09-01T12:00:00.000Z", minutes: 30 },
+      { start: "2026-09-01T13:00:00.000Z", end: "2026-09-01T13:30:00.000Z", minutes: 30 },
+    ];
+    expect(relevantGaps([a, b], gaps)).toEqual([gaps[0], gaps[1], gaps[2]]);
+  });
+
+  it("interleaves bookings and their surrounding gaps in start order", () => {
+    const a = booking("a", "2026-09-01T10:00:00.000Z");
+    const b = booking("b", "2026-09-01T11:00:00.000Z");
+    const gaps = [
+      { start: "2026-09-01T09:00:00.000Z", end: "2026-09-01T10:00:00.000Z", minutes: 60 },
+      { start: "2026-09-01T10:30:00.000Z", end: "2026-09-01T11:00:00.000Z", minutes: 30 },
+      { start: "2026-09-01T11:30:00.000Z", end: "2026-09-01T12:00:00.000Z", minutes: 30 },
+    ];
+    expect(agendaItems([a, b], gaps).map((item) => item.kind)).toEqual(["gap", "booking", "gap", "booking", "gap"]);
   });
 });

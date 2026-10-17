@@ -5,7 +5,7 @@ import { capabilityRows, materializeCapabilities, newCapabilityIdentity } from "
 import { db } from "@/server/db";
 import { AppError, conflict, notFound } from "@/server/errors";
 import { mapBooking } from "@/server/mappers";
-import { generateSlots, getAvailability, type BusyInterval } from "@/server/services/availability";
+import { dayOpenIntervals, generateSlots, getAvailability, mergeBusyIntervals, type BusyInterval } from "@/server/services/availability";
 import { getCalendarService, providerCalendarEventId, type CalendarService } from "@/server/services/calendar";
 import { getEventTypeBySlug, getEventTypeForSlotsBySlug } from "@/server/services/event-types";
 import { currentDatabaseContext, enterDatabaseAction, enterDatabaseContext, enterPublicBookingDatabaseContext, enterPublicDatabaseContext } from "@/server/db-context";
@@ -30,6 +30,55 @@ export async function listBookings(workspaceId: string) {
   return (await db.booking.findMany({ where: { workspaceId }, include: bookingInclude, orderBy: { startAt: "asc" } })).map(mapBooking);
 }
 
+export type DayGap = { start: string; end: string; minutes: number };
+
+// The free stretches of a civil date: the studio's open hours for that date minus the host's booked and
+// buffered time. The dashboard calendar shows a "+" on every gap longer than 15 minutes, which is exactly
+// what this returns. Times are UTC instants; the caller renders them in the studio zone. The same shaping
+// (open hours + booked time) that generateSlots applies is reused, so a gap the barber sees here is a gap
+// createBooking can actually fill.
+export async function listDayGaps(workspaceId: string, ownerId: string, dateKey: string): Promise<DayGap[]> {
+  const date = DateTime.fromISO(dateKey, { zone: "utc" });
+  if (!date.isValid) return [];
+  const schedule = await getAvailability(workspaceId, ownerId, undefined, {
+    from: date.minus({ days: 1 }).toJSDate(),
+    to: date.plus({ days: 2 }).toJSDate(),
+  });
+  const zone = schedule.timeZone;
+  const dayStart = DateTime.fromISO(`${dateKey}T00:00:00`, { zone }).startOf("day");
+  const dayEnd = dayStart.plus({ days: 1 });
+  const intervals = dayOpenIntervals(schedule, dateKey, dayStart.weekday % 7);
+  const rangeStart = dayStart.toUTC().toJSDate();
+  const rangeEnd = dayEnd.toUTC().toJSDate();
+  const bookings = await db.booking.findMany({
+    where: { workspaceId, status: { in: activeStatuses }, startAt: { lt: rangeEnd }, endAt: { gt: rangeStart } },
+    select: { startAt: true, endAt: true, bufferBeforeMinutes: true, bufferAfterMinutes: true },
+  });
+  const busy = mergeBusyIntervals(bookings.map((item) => ({
+    start: DateTime.fromJSDate(item.startAt).minus({ minutes: item.bufferBeforeMinutes }).toJSDate(),
+    end: DateTime.fromJSDate(item.endAt).plus({ minutes: item.bufferAfterMinutes }).toJSDate(),
+  })));
+  const gaps: DayGap[] = [];
+  const push = (startMs: number, endMs: number) => {
+    const minutes = Math.round((endMs - startMs) / 60_000);
+    if (minutes > 15) gaps.push({ start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), minutes });
+  };
+  for (const interval of intervals) {
+    const openStart = dayStart.plus({ minutes: interval.startMinute }).toMillis();
+    const openEnd = dayStart.plus({ minutes: interval.endMinute }).toMillis();
+    let cursor = openStart;
+    for (const block of busy) {
+      const blockStart = block.start.getTime();
+      const blockEnd = block.end.getTime();
+      if (blockEnd <= cursor || blockStart >= openEnd) continue;
+      if (blockStart > cursor) push(cursor, Math.min(blockStart, openEnd));
+      cursor = Math.max(cursor, blockEnd);
+    }
+    if (cursor < openEnd) push(cursor, openEnd);
+  }
+  return gaps.sort((left, right) => left.start.localeCompare(right.start));
+}
+
 export async function getBookingForHost(workspaceId: string, id: string) {
   const booking = await db.booking.findFirst({ where: { id, workspaceId }, include: bookingInclude });
   if (!booking) throw notFound("Booking");
@@ -47,7 +96,7 @@ export async function listManageRescheduleSlots(id: string, from: Date, to: Date
   if (!booking || booking.status !== "CONFIRMED") throw notFound("Booking");
   if (booking.calendarProviderSnapshot === "provider_recovery_required") throw new AppError("CALENDAR_PROVIDER_RECOVERY_REQUIRED", "Reconcile this upgraded booking's calendar provider before rescheduling.", 503);
   const providerEventId = booking.externalCalendarEventId ?? (booking.calendarProviderSnapshot === "google" ? providerCalendarEventId(booking.id) : undefined);
-  const slots = await listPublicSlots(booking.eventType.slug, from, to, outputTimeZone, calendar, durationId ?? booking.durationId ?? undefined, id, true, true, providerEventId, booking.bookingWindowDays, booking.durationMinutes, booking.bufferBeforeMinutes, booking.bufferAfterMinutes, booking.calendarProviderSnapshot === "google" ? "google" : "local");
+  const slots = await listPublicSlots(booking.eventType.slug, from, to, outputTimeZone, calendar, durationId ?? booking.durationId ?? undefined, id, true, true, providerEventId, booking.bookingWindowDays, booking.durationMinutes, booking.bufferBeforeMinutes, booking.bufferAfterMinutes, booking.calendarProviderSnapshot === "google" ? "google" : "local", true);
   return slots.filter((slot) => new Date(slot.start).getTime() !== booking.startAt.getTime());
 }
 
@@ -70,8 +119,8 @@ export async function hostBookedIntervals(eventType: { id: string; workspaceId: 
   return bookings.map((item) => ({ start: DateTime.fromJSDate(item.startAt).minus({ minutes: item.bufferBeforeMinutes }).toJSDate(), end: DateTime.fromJSDate(item.endAt).plus({ minutes: item.bufferAfterMinutes }).toJSDate() }));
 }
 
-export async function listPublicSlots(slug: string, from: Date, to: Date, outputTimeZone: string, calendar: CalendarService = getCalendarService(), durationId?: string, excludeBookingId?: string, allowInactiveDuration = false, allowInactiveEvent = false, excludeProviderEventId?: string, bookingWindowDaysOverride?: number, durationMinutesOverride?: number, bufferBeforeOverride?: number, bufferAfterOverride?: number, busyProviderOverride?: "google" | "local") {
-  const eventType = await getEventTypeForSlotsBySlug(slug, !allowInactiveEvent);
+export async function listPublicSlots(slug: string, from: Date, to: Date, outputTimeZone: string, calendar: CalendarService = getCalendarService(), durationId?: string, excludeBookingId?: string, allowInactiveDuration = false, allowInactiveEvent = false, excludeProviderEventId?: string, bookingWindowDaysOverride?: number, durationMinutesOverride?: number, bufferBeforeOverride?: number, bufferAfterOverride?: number, busyProviderOverride?: "google" | "local", allowNonPublicEvent = false) {
+  const eventType = await getEventTypeForSlotsBySlug(slug, !allowInactiveEvent, !allowNonPublicEvent);
   // getEventTypeForSlotsBySlug enters a slug-only context before its first await -- which does reach us,
   // replacing whatever the caller had -- and then re-enters the full one after that await, where it is
   // discarded the moment it returns (see db-context.ts). So without this line we resume holding a context
@@ -184,7 +233,9 @@ async function ensureCheckoutLinked(bookingId: string, payments: PaymentService)
 // genuinely free, the answers valid, the buffers honoured -- applies unchanged.
 // byStudio marks the dashboard's own "Add booking", which only changes what a refusal says: the barber is
 // told why, a client on the public page is not.
-export type CreateBookingOptions = { allowSecondActiveBooking?: boolean; byStudio?: boolean };
+// allowInternalService lets the dashboard book the hidden "Quick appointment" service (isPublic=false),
+// which the public page must never be able to reach.
+export type CreateBookingOptions = { allowSecondActiveBooking?: boolean; byStudio?: boolean; allowInternalService?: boolean };
 
 export async function createBooking(
   slug: string, input: CreateBookingInput, idempotencyKey: string,
@@ -192,7 +243,7 @@ export async function createBooking(
   options: CreateBookingOptions = {},
 ): Promise<InternalCreateBookingResult> {
   const requestFingerprint = createHash("sha256").update(JSON.stringify({ slug, ...input })).digest("hex");
-  const eventType = await withDatabaseTransactionRetry(() => getEventTypeBySlug(slug));
+  const eventType = await withDatabaseTransactionRetry(() => getEventTypeBySlug(slug, true, !options.allowInternalService));
   enterPublicBookingDatabaseContext(eventType.id, eventType.workspaceId, idempotencyKey);
   const prior = await withDatabaseTransactionRetry(() => priorResult(slug, idempotencyKey, requestFingerprint));
   if (prior) {
@@ -229,7 +280,7 @@ export async function createBooking(
   const requestedEnd = DateTime.fromJSDate(requestedStart).plus({ minutes: duration.durationMinutes }).toJSDate();
   const windowStart = DateTime.fromJSDate(requestedStart).startOf("day").minus({ hours: 14 }).toJSDate();
   const windowEnd = DateTime.fromJSDate(requestedStart).endOf("day").plus({ hours: 14 }).toJSDate();
-  const slots = await withDatabaseTransactionRetry(() => listPublicSlots(slug, windowStart, windowEnd, input.inviteeTimeZone, calendar, duration.id));
+  const slots = await withDatabaseTransactionRetry(() => listPublicSlots(slug, windowStart, windowEnd, input.inviteeTimeZone, calendar, duration.id, undefined, false, false, undefined, undefined, undefined, undefined, undefined, undefined, Boolean(options.allowInternalService)));
   if (!slots.some((slot) => new Date(slot.start).getTime() === requestedStart.getTime())) throw conflict("That time is no longer available.");
   enterPublicBookingDatabaseContext(eventType.id, eventType.workspaceId, idempotencyKey);
   const capability = newCapabilityIdentity(requestedEnd);
@@ -336,7 +387,7 @@ export async function rescheduleBooking(id: string, startAt: string, calendar: C
   const rangeStart = DateTime.fromJSDate(requestedStart).startOf("day").minus({ hours: 14 }).toJSDate();
   const rangeEnd = DateTime.fromJSDate(requestedStart).endOf("day").plus({ hours: 14 }).toJSDate();
   const providerEventId = booking.externalCalendarEventId ?? (booking.calendarProviderSnapshot === "google" ? providerCalendarEventId(booking.id) : undefined);
-  const slots = await listPublicSlots(booking.eventType.slug, rangeStart, rangeEnd, booking.inviteeTimeZone, calendar, booking.durationId ?? undefined, id, true, true, providerEventId, booking.bookingWindowDays, booking.durationMinutes, booking.bufferBeforeMinutes, booking.bufferAfterMinutes, booking.calendarProviderSnapshot === "google" ? "google" : "local");
+  const slots = await listPublicSlots(booking.eventType.slug, rangeStart, rangeEnd, booking.inviteeTimeZone, calendar, booking.durationId ?? undefined, id, true, true, providerEventId, booking.bookingWindowDays, booking.durationMinutes, booking.bufferBeforeMinutes, booking.bufferAfterMinutes, booking.calendarProviderSnapshot === "google" ? "google" : "local", true);
   if (!slots.some((slot) => new Date(slot.start).getTime() === requestedStart.getTime())) throw conflict("That time is no longer available.");
   if (mutationContext) enterDatabaseContext({ ...mutationContext, action: "booking_write" });
   let updated;

@@ -81,6 +81,11 @@ export type CreateBookingInput = {
 // The organizer's own booking form posts to the dashboard collection, so the event type travels by id
 // inside the workspace rather than by public slug.
 export type HostBookingInput = CreateBookingInput & { eventTypeId: string };
+// A free stretch of a studio day, surfaced by the calendar's gap "+" buttons.
+export type DayGap = { start: string; end: string; minutes: number };
+// The hidden 15-minute "Quick appointment" service the dashboard books into.
+export type StudioQuickService = { id: string; name: string; durationId: string; durationMinutes: number };
+export type QuickBookingInput = { startAt: string; inviteeName: string; inviteeEmail: string; inviteeTimeZone: string; notes?: string };
 export type CreateBookingResult = {
   bookingId: string; status: BookingSummary["status"]; checkoutUrl: string | null;
   checkoutState: "NOT_REQUIRED" | "READY" | "RETRY_REQUIRED";
