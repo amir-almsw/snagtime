@@ -33,7 +33,7 @@ export async function listBookings(workspaceId: string) {
 export type DayGap = { start: string; end: string; minutes: number };
 
 // The free stretches of a civil date: the studio's open hours for that date minus the host's booked and
-// buffered time. The dashboard calendar shows a "+" on every gap longer than 15 minutes, which is exactly
+// buffered time. The dashboard calendar shows a "+" on every gap of 15 minutes or more, which is exactly
 // what this returns. Times are UTC instants; the caller renders them in the studio zone. The same shaping
 // (open hours + booked time) that generateSlots applies is reused, so a gap the barber sees here is a gap
 // createBooking can actually fill.
@@ -61,7 +61,7 @@ export async function listDayGaps(workspaceId: string, ownerId: string, dateKey:
   const gaps: DayGap[] = [];
   const push = (startMs: number, endMs: number) => {
     const minutes = Math.round((endMs - startMs) / 60_000);
-    if (minutes > 15) gaps.push({ start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), minutes });
+    if (minutes >= 15) gaps.push({ start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), minutes });
   };
   for (const interval of intervals) {
     const openStart = dayStart.plus({ minutes: interval.startMinute }).toMillis();

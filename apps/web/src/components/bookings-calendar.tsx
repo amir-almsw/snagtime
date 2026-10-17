@@ -16,8 +16,8 @@ const chipLimit = 3;
 // load, or a booking deep-linked from the dashboard -- so the barber's own navigation is never yanked
 // away mid-look. Every date is a civil date in the studio timezone; the browser's zone plays no part.
 // Canceled bookings never appear here: they only clutter a day the barber is planning around, and the
-// list layout still shows them for the record. Free stretches of the selected day (longer than 15
-// minutes and touching a booking) get a "+" that opens the gap-fill form.
+// list layout still shows them for the record. Free stretches of the selected day (15 minutes or more
+// and touching a booking) get a "+" that opens the gap-fill form.
 export function BookingsCalendar({ bookings, timeZone, anchorDay, onOpen, onGapAdd, canManage }: { bookings: Booking[]; timeZone: string; anchorDay: string; onOpen: (booking: Booking, trigger: HTMLButtonElement) => void; onGapAdd: (gap: DayGap) => void; canManage: boolean }) {
   const [month, setMonth] = useState<CalendarMonth>(() => monthOf(anchorDay));
   const [selectedDay, setSelectedDay] = useState(anchorDay);
