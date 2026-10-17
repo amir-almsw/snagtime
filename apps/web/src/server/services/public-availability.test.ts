@@ -47,7 +47,10 @@ describe("public availability comes from the database", () => {
     expect(displaced.length).toBeGreaterThan(0);
     expect(after.some((slot) => slot.start === target!.start)).toBe(false);
     expect(after.some((slot) => overlaps(slot, booking))).toBe(false);
-    expect(after.length).toBe(before.length - displaced.length);
+    // The appointment is removed, and the free stretch that opens at its end becomes bookable even off the
+    // 45-minute grid: exactly one gap-fill slot is added at the booking's end.
+    expect(after.some((slot) => new Date(slot.start).getTime() === booking.endAt.getTime())).toBe(true);
+    expect(after.length).toBe(before.length - displaced.length + 1);
     // The nearest grid slots on either side that the appointment does not overlap stay open.
     const gridSpan = Math.ceil(duration.durationMinutes / SLOT_INTERVAL_MINUTES) * SLOT_INTERVAL_MINUTES * 60_000;
     expect(after.some((slot) => new Date(slot.start).getTime() === booking.startAt.getTime() - gridSpan)).toBe(true);
@@ -86,7 +89,10 @@ describe("public availability comes from the database", () => {
     const external: CalendarService = { ...noProviderBusy, async getBusyIntervals() { return [block]; } };
     const slots = await listPublicSlots(event.slug, from, to, "UTC", external, duration.id);
     expect(slots.some((slot) => slot.start === target.start)).toBe(false);
-    expect(slots.length).toBeLessThan(before.length);
+    // The provider block removes its slot, and the free stretch at its end becomes a fresh off-grid slot,
+    // so the count is unchanged while the blocked time is gone.
+    expect(slots.some((slot) => new Date(slot.start).getTime() === new Date(target.end).getTime())).toBe(true);
+    expect(slots.length).toBe(before.length);
   });
 
   // A partial-day time-off block only removes hours; it must never make an already-booked time bookable

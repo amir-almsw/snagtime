@@ -9,28 +9,31 @@ const includeOptions = { durations: { where: { isActive: true }, orderBy: { posi
 const slotOptions = { durations: { where: { isActive: true }, orderBy: { position: "asc" as const } }, owner: { select: { timeZone: true } } };
 
 export async function listEventTypes(workspaceId: string) {
-  return (await db.eventType.findMany({ where: { workspaceId }, include: includeOptions, orderBy: { createdAt: "desc" } })).map(mapEventType);
+  // The studio's internal "Quick appointment" service (isPublic=false) is never managed here, so it
+  // stays out of the Services page and the regular dashboard booking form; the gap-fill flow reaches
+  // it through /api/studio/quick-service instead.
+  return (await db.eventType.findMany({ where: { workspaceId, isPublic: true }, include: includeOptions, orderBy: { createdAt: "desc" } })).map(mapEventType);
 }
 
 // Scalars only: the public EventDuration/CustomQuestion policies are scoped to one event
 // subject, so relations included under the directory sentinel would come back empty in production.
 export async function listPublicEventDirectory() {
   enterPublicDatabaseContext("__directory__");
-  return db.eventType.findMany({ where: { isActive: true }, select: { slug: true, name: true, description: true, durationMinutes: true }, orderBy: { createdAt: "asc" } });
+  return db.eventType.findMany({ where: { isActive: true, isPublic: true }, select: { slug: true, name: true, description: true, durationMinutes: true }, orderBy: { createdAt: "asc" } });
 }
 
-export async function getEventTypeBySlug(slug: string, activeOnly = true) {
+export async function getEventTypeBySlug(slug: string, activeOnly = true, publicOnly = true) {
   enterPublicDatabaseContext(slug);
   const eventType = await db.eventType.findUnique({ where: { slug }, include: includeOptions });
-  if (!eventType || (activeOnly && !eventType.isActive)) throw notFound("Event type");
+  if (!eventType || (activeOnly && !eventType.isActive) || (publicOnly && !eventType.isPublic)) throw notFound("Event type");
   enterPublicDatabaseContext(slug, eventType.workspaceId, eventType.id);
   return eventType;
 }
 
-export async function getEventTypeForSlotsBySlug(slug: string, activeOnly = true) {
+export async function getEventTypeForSlotsBySlug(slug: string, activeOnly = true, publicOnly = true) {
   enterPublicDatabaseContext(slug);
   const eventType = await db.eventType.findUnique({ where: { slug }, include: slotOptions });
-  if (!eventType || (activeOnly && !eventType.isActive)) throw notFound("Event type");
+  if (!eventType || (activeOnly && !eventType.isActive) || (publicOnly && !eventType.isPublic)) throw notFound("Event type");
   enterPublicDatabaseContext(slug, eventType.workspaceId, eventType.id);
   return eventType;
 }
@@ -115,4 +118,51 @@ export async function deleteEventType(workspaceId: string, id: string) {
   if (!current) throw notFound("Event type");
   if (await db.booking.count({ where: { eventTypeId: id } })) await db.eventType.update({ where: { id }, data: { isActive: false } });
   else await db.eventType.delete({ where: { id } });
+}
+
+// The barber's 15-minute "Quick appointment" lives as a real service so a booking can be created for it,
+// but it is hidden from book.dvision.studio (isPublic=false) and from the Services page (listEventTypes
+// filters isPublic). It is created lazily and idempotently by the dashboard's quick-booking flow.
+export const QUICK_SLOT_SLUG = "dvision-quick-15";
+export async function ensureStudioQuickService(workspaceId: string, ownerId: string) {
+  enterDatabaseAction("event_write");
+  const eventType = await db.eventType.upsert({
+    where: { slug: QUICK_SLOT_SLUG },
+    // Keep it permanently active and hidden, whatever a past write may have left behind.
+    update: { isActive: true, isPublic: false },
+    create: {
+      workspaceId,
+      ownerId,
+      name: "Quick appointment",
+      slug: QUICK_SLOT_SLUG,
+      description: "A short studio slot booked from the dashboard. Not offered to clients online.",
+      durationMinutes: 15,
+      color: "#C11427",
+      locationType: "CUSTOM",
+      locationValue: "At the studio",
+      isActive: true,
+      isPublic: false,
+      bufferBeforeMinutes: 0,
+      bufferAfterMinutes: 0,
+      minimumNoticeMinutes: 0,
+      bookingWindowDays: 365,
+      priceCents: 0,
+      currency: "eur",
+    },
+  });
+  let duration = await db.eventDuration.findFirst({ where: { eventTypeId: eventType.id, isDefault: true } })
+    ?? await db.eventDuration.findFirst({ where: { eventTypeId: eventType.id } });
+  if (!duration) {
+    duration = await db.eventDuration.create({ data: {
+      eventTypeId: eventType.id,
+      label: "15 minutes",
+      durationMinutes: 15,
+      isDefault: true,
+      isActive: true,
+      priceCents: 0,
+      currency: "eur",
+      position: 0,
+    } });
+  }
+  return { id: eventType.id, name: eventType.name, durationId: duration.id, durationMinutes: duration.durationMinutes };
 }

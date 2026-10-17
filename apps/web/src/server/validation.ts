@@ -112,6 +112,12 @@ export const hostBookingInput = bookingInput.omit({ inviteeEmail: true }).extend
   inviteeEmail: z.string().trim().toLowerCase().refine((value) => value === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), "Use a valid email address."),
 });
 
+// The calendar gap "+" booking into the hidden 15-minute service: same as a host booking but without an
+// event type or duration (both are fixed by the quick service), and without custom answers (it has none).
+export const quickBookingInput = bookingInput.omit({ inviteeEmail: true, durationId: true, answers: true }).extend({
+  inviteeEmail: z.string().trim().toLowerCase().refine((value) => value === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), "Use a valid email address."),
+});
+
 export const demoLoginInput = z.object({ email: z.email().transform((value) => value.toLowerCase()), password: z.string().min(1).max(200) });
 export const clientGateInput = z.object({ password: z.string().min(1).max(200) }).strict();
 const strongPassword = z.string().min(12).max(200).refine((value) => /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value) && /[^A-Za-z0-9]/.test(value), "Use upper, lower, number, and symbol.");
