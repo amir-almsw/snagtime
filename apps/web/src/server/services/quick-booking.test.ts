@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { DateTime } from "luxon";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
-import { createBooking, listPublicSlots } from "@/server/services/bookings";
+import { createBooking, listDayGaps, listPublicSlots } from "@/server/services/bookings";
 import { ensureStudioQuickService, getEventTypeBySlug, listEventTypes, listPublicEventDirectory, QUICK_SLOT_SLUG } from "@/server/services/event-types";
 import type { CalendarService } from "@/server/services/calendar";
 
@@ -44,5 +45,36 @@ describe("hidden quick appointment service", () => {
     const created = await createBooking(QUICK_SLOT_SLUG, { startAt: slot.start, inviteeName: "Walk In", inviteeEmail: "walk-in@example.com", inviteeTimeZone: "Europe/Amsterdam" }, `quick-booking-${randomUUID()}`, undefined, undefined, { allowInternalService: true, allowSecondActiveBooking: true, byStudio: true });
     createdBookingIds.push(created.booking.id);
     expect(created.booking).toMatchObject({ eventTypeId: quick.id, durationMinutes: 15, eventTypeName: "Quick appointment" });
+  });
+
+  it("lists a 15-minute gap between two bookings for a civil date", async () => {
+    const event = await db.eventType.findFirstOrThrow({ where: { slug: "strategy-call" } });
+    let day = DateTime.now().setZone("Europe/Amsterdam").plus({ days: 8 }).startOf("day");
+    while (day.weekday > 5) day = day.plus({ days: 1 });
+    const dateKey = day.toFormat("yyyy-LL-dd");
+    const range = (time: string, minutes: number) => {
+      const start = DateTime.fromISO(`${dateKey}T${time}:00`, { zone: "Europe/Amsterdam" }).toUTC();
+      return { start: start.toJSDate(), end: start.plus({ minutes }).toJSDate() };
+    };
+    const a = range("13:15", 30); // 13:15-13:45
+    const b = range("14:00", 45); // 14:00-14:45 -> 15-minute gap
+    const ids: string[] = [];
+    for (const [name, item] of [["a", a], ["b", b]] as const) {
+      const id = randomUUID(); ids.push(id);
+      await db.booking.create({ data: {
+        id, workspaceId: event.workspaceId, eventTypeId: event.id, hostId: event.ownerId, durationId: null,
+        durationMinutes: item === a ? 30 : 45, priceCents: 0, currency: "usd", bufferBeforeMinutes: 0, bufferAfterMinutes: 0,
+        inviteeName: `Gap ${name}`, inviteeEmail: `gap-${name}@example.com`, inviteeTimeZone: "Europe/Amsterdam",
+        startAt: item.start, endAt: item.end, status: "CONFIRMED", idempotencyKey: randomUUID(), requestFingerprint: randomUUID(),
+        capabilityVersion: randomUUID(), manageExpiresAt: new Date(),
+      } });
+    }
+    try {
+      const gaps = await listDayGaps(event.workspaceId, event.ownerId, dateKey);
+      const between = gaps.find((gap) => Math.abs(new Date(gap.start).getTime() - a.end.getTime()) < 1000 && Math.abs(new Date(gap.end).getTime() - b.start.getTime()) < 1000);
+      expect(between?.minutes).toBe(15);
+    } finally {
+      await db.booking.deleteMany({ where: { id: { in: ids } } });
+    }
   });
 });
