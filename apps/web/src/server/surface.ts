@@ -10,7 +10,7 @@ const bookPrefixes = ["/gate", "/book", "/manage", "/api/gate", "/api/public", "
 const adminPrefixes = [
   "/dashboard", "/bookings", "/customers", "/availability", "/event-types", "/integrations", "/settings", "/onboarding",
   "/forgot-password", "/reset-password", "/verify-email", "/manage",
-  "/api/auth", "/api/account", "/api/workspace", "/api/event-types", "/api/availability", "/api/settings", "/api/integrations", "/api/bookings", "/api/customers", "/api/health",
+  "/api/auth", "/api/account", "/api/workspace", "/api/event-types", "/api/availability", "/api/settings", "/api/integrations", "/api/studio", "/api/bookings", "/api/customers", "/api/health",
 ];
 
 // /api/bookings/* stays on the booking surface for the manage flow above, but the collection route
