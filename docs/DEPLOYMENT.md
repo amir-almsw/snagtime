@@ -385,6 +385,22 @@ A schema change on a live database is `npm run db:migrate:postgres`
 safe to re-run. A release that ships no migration — such as the availability work that added hour-range
 time off — needs no database step at all.
 
+On this VPS the incremental migrations have been applied directly instead of through `prisma migrate
+deploy`: `migration_database_url` points at the in-network `postgres:5432` host (unreachable from the host
+shell), and `_prisma_migrations` was never populated — the baseline was installed by the `migration`
+service above — so `migrate deploy` would try to replay the baseline and fail on `relation "User" already
+exists`. The proven pattern (see the deploy shell history) is to pipe the incremental SQL into the running
+postgres container **before** rebuilding the images:
+
+```bash
+docker compose -f compose.production.yml -f compose.ops.yml --env-file production.env \
+  exec -T postgres sh -c 'PGPASSWORD="$(cat /run/secrets/postgres_owner_password)" psql -U tempocove_owner -d tempocove -v ON_ERROR_STOP=1 --single-transaction' \
+  < prisma/postgresql/migrations/<timestamp>_<name>/migration.sql
+```
+
+Because it is not tracked by a migration table, write each incremental migration to be idempotent
+(`ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, …) so re-running it is a no-op.
+
 ### PostgreSQL and Caddy are never rebuilt or restarted
 
 Neither carries application code, and `up -d web-book web-admin worker` names the three services
