@@ -61,9 +61,7 @@ export function CustomersView({ initialView }: { initialView: CustomersList }) {
     if (next === "blacklist") url.searchParams.set("view", "blacklist"); else url.searchParams.delete("view");
     window.history.replaceState(null, "", `${url.pathname}${url.search}`);
   };
-  const selectable = canManage ? clients.filter((client) => !client.blocked) : [];
   const toggleSelected = (id: string) => setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
-  const toggleAll = () => setSelected((current) => (current.size === selectable.length ? new Set() : new Set(selectable.map((client) => client.id))));
   const selectedClients = clients.filter((client) => selected.has(client.id) && !client.blocked);
   const copy = async (key: string, text: string) => {
     try { await navigator.clipboard.writeText(text); setCopied(key); window.setTimeout(() => setCopied((current) => (current === key ? "" : current)), 1600); }
@@ -76,6 +74,19 @@ export function CustomersView({ initialView }: { initialView: CustomersList }) {
     const digits = needle.replace(/\D/g, "");
     return clients.filter((client) => client.name.toLowerCase().includes(needle) || client.email.includes(needle) || (digits.length >= 3 && (client.phone ?? "").replace(/\D/g, "").includes(digits)));
   }, [clients, query]);
+
+  // The table head is hidden on phones, so the toolbar carries the same select-all control there.
+  // Both honour the search: with a query active, select-all means every matching row that can
+  // receive a message, not every customer the studio has ever added.
+  const visibleSelectable = useMemo(() => canManage ? filtered.filter((client) => !client.blocked) : [], [canManage, filtered]);
+  const allVisibleSelected = visibleSelectable.length > 0 && visibleSelectable.every((client) => selected.has(client.id));
+  const toggleAll = () => setSelected((current) => {
+    const next = new Set(current);
+    const everySelected = visibleSelectable.length > 0 && visibleSelectable.every((client) => next.has(client.id));
+    if (everySelected) visibleSelectable.forEach((client) => next.delete(client.id));
+    else visibleSelectable.forEach((client) => next.add(client.id));
+    return next;
+  });
 
   const addClient = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setSaving(true);
@@ -170,12 +181,16 @@ export function CustomersView({ initialView }: { initialView: CustomersList }) {
         </div>
         <div className="customer-form-actions"><button type="button" className="button button-ghost" onClick={() => setAdding(false)}>Cancel</button><button type="submit" className="button button-primary" disabled={saving}>{saving ? "Saving…" : "Save customer"}</button></div>
       </form>}
-      {clients.length > 0 && <div className="toolbar"><div className="search-field"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, email or phone" aria-label="Search customers" /></div>{canManage && <button type="button" className="button button-primary button-sm" onClick={() => setComposing(true)} disabled={selected.size === 0}><Icon name="mail" size={14} />Message selected{selected.size > 0 ? ` (${selected.size})` : ""}</button>}</div>}
+      {clients.length > 0 && <div className="toolbar">
+        <div className="search-field"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, email or phone" aria-label="Search customers" /></div>
+        {canManage && <label className="customer-select-all-mobile"><input type="checkbox" checked={allVisibleSelected} disabled={visibleSelectable.length === 0} onChange={toggleAll} aria-label="Select all customers" /><span>{query.trim() ? "Select all results" : "Select all"}</span></label>}
+        {canManage && <button type="button" className="button button-primary button-sm" onClick={() => setComposing(true)} disabled={selected.size === 0}><Icon name="mail" size={14} />Message selected{selected.size > 0 ? ` (${selected.size})` : ""}</button>}
+      </div>}
       <section className="panel customers-panel">
         {clients.length === 0 ? <EmptyState icon="team" title="No customers yet" description={canManage ? "Import the spreadsheet from your old salon system, or add customers one at a time." : "Customers the studio adds appear here."} /> : <>
-          <div className={`booking-table-head customer-table-head ${canManage ? "is-selectable" : ""}`}>{canManage && <span className="customer-check"><input type="checkbox" checked={selectable.length > 0 && selected.size === selectable.length} onChange={toggleAll} aria-label="Select all customers" /></span>}<span>Customer</span><span>Email</span><span>Phone</span><span /></div>
+          <div className={`booking-table-head customer-table-head ${canManage ? "is-selectable" : ""}`}>{canManage && <label className="customer-check"><input type="checkbox" checked={allVisibleSelected} disabled={visibleSelectable.length === 0} onChange={toggleAll} aria-label="Select all customers" /></label>}<span>Customer</span><span>Email</span><span>Phone</span><span /></div>
           <ul className="customer-list">{filtered.map((client) => <li className={`customer-row ${canManage ? "is-selectable" : ""}`} key={client.id}>
-            {canManage && <span className="customer-check"><input type="checkbox" checked={selected.has(client.id)} disabled={client.blocked} onChange={() => toggleSelected(client.id)} aria-label={`Select ${client.name}`} /></span>}
+            {canManage && <label className="customer-check"><input type="checkbox" checked={selected.has(client.id)} disabled={client.blocked} onChange={() => toggleSelected(client.id)} aria-label={`Select ${client.name}`} /></label>}
             <span className="customer-cell"><Avatar name={client.name} size="sm" /><strong className="customer-value">{client.name}</strong>{client.blocked && <Badge tone="danger">Blacklisted</Badge>}<CopyButton label={`Copy the name ${client.name}`} copied={copied === `${client.id}:name`} onCopy={() => void copy(`${client.id}:name`, client.name)} /></span>
             <span className="customer-cell"><span className="customer-value">{client.email}</span><CopyButton label={`Copy the email for ${client.name}`} copied={copied === `${client.id}:email`} onCopy={() => void copy(`${client.id}:email`, client.email)} /></span>
             <span className="customer-cell">{client.phone ? <><span className="customer-value">{client.phone}</span><CopyButton label={`Copy the phone number for ${client.name}`} copied={copied === `${client.id}:phone`} onCopy={() => void copy(`${client.id}:phone`, client.phone ?? "")} /></> : <span className="customer-muted">No phone</span>}</span>
