@@ -40,6 +40,7 @@ export function CustomersView({ initialView }: { initialView: CustomersList }) {
   const [blocking, setBlocking] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [composing, setComposing] = useState(false);
+  const [directRecipient, setDirectRecipient] = useState<KnownClient | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
 
@@ -56,7 +57,7 @@ export function CustomersView({ initialView }: { initialView: CustomersList }) {
   };
   const fail = (message: string) => { setNotice(""); setError(message); };
   const chooseList = (next: CustomersList) => {
-    setList(next); setSelected(new Set());
+    setList(next); setSelected(new Set()); setComposing(false); setDirectRecipient(null);
     const url = new URL(window.location.href);
     if (next === "blacklist") url.searchParams.set("view", "blacklist"); else url.searchParams.delete("view");
     window.history.replaceState(null, "", `${url.pathname}${url.search}`);
@@ -184,7 +185,7 @@ export function CustomersView({ initialView }: { initialView: CustomersList }) {
       {clients.length > 0 && <div className="toolbar">
         <div className="search-field"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, email or phone" aria-label="Search customers" /></div>
         {canManage && <label className="customer-select-all-mobile"><input type="checkbox" checked={allVisibleSelected} disabled={visibleSelectable.length === 0} onChange={toggleAll} aria-label="Select all customers" /><span>{query.trim() ? "Select all results" : "Select all"}</span></label>}
-        {canManage && <button type="button" className="button button-primary button-sm" onClick={() => setComposing(true)} disabled={selected.size === 0}><Icon name="mail" size={14} />Message selected{selected.size > 0 ? ` (${selected.size})` : ""}</button>}
+        {canManage && <button type="button" className="button button-primary button-sm" onClick={() => { setDirectRecipient(null); setComposing(true); }} disabled={selected.size === 0}><Icon name="mail" size={14} />Message selected{selected.size > 0 ? ` (${selected.size})` : ""}</button>}
       </div>}
       <section className="panel customers-panel">
         {clients.length === 0 ? <EmptyState icon="team" title="No customers yet" description={canManage ? "Import the spreadsheet from your old salon system, or add customers one at a time." : "Customers the studio adds appear here."} /> : <>
@@ -192,9 +193,10 @@ export function CustomersView({ initialView }: { initialView: CustomersList }) {
           <ul className="customer-list">{filtered.map((client) => <li className={`customer-row ${canManage ? "is-selectable" : ""}`} key={client.id}>
             {canManage && <label className="customer-check"><input type="checkbox" checked={selected.has(client.id)} disabled={client.blocked} onChange={() => toggleSelected(client.id)} aria-label={`Select ${client.name}`} /></label>}
             <span className="customer-cell"><Avatar name={client.name} size="sm" /><strong className="customer-value">{client.name}</strong>{client.blocked && <Badge tone="danger">Blacklisted</Badge>}<CopyButton label={`Copy the name ${client.name}`} copied={copied === `${client.id}:name`} onCopy={() => void copy(`${client.id}:name`, client.name)} /></span>
-            <span className="customer-cell"><span className="customer-value">{client.email}</span><CopyButton label={`Copy the email for ${client.name}`} copied={copied === `${client.id}:email`} onCopy={() => void copy(`${client.id}:email`, client.email)} /></span>
-            <span className="customer-cell">{client.phone ? <><span className="customer-value">{client.phone}</span><CopyButton label={`Copy the phone number for ${client.name}`} copied={copied === `${client.id}:phone`} onCopy={() => void copy(`${client.id}:phone`, client.phone ?? "")} /></> : <span className="customer-muted">No phone</span>}</span>
+            <span className="customer-cell"><a className="customer-value customer-link" href={`mailto:${client.email}`}>{client.email}</a><CopyButton label={`Copy the email for ${client.name}`} copied={copied === `${client.id}:email`} onCopy={() => void copy(`${client.id}:email`, client.email)} /></span>
+            <span className="customer-cell">{client.phone ? <><a className="customer-value customer-link" href={`tel:${client.phone.replace(/[^\d+]/g, "")}`}>{client.phone}</a><CopyButton label={`Copy the phone number for ${client.name}`} copied={copied === `${client.id}:phone`} onCopy={() => void copy(`${client.id}:phone`, client.phone ?? "")} /></> : <span className="customer-muted">No phone</span>}</span>
             <span className="customer-actions">{canManage && <>
+              <button type="button" className="icon-button customer-message" onClick={() => { setDirectRecipient(client); setComposing(true); }} disabled={client.blocked} aria-label={`Message ${client.name}`} title={client.blocked ? "Blacklisted addresses cannot be emailed" : "Message"}><Icon name="mail" size={16} /></button>
               <button type="button" className="button button-secondary button-sm" onClick={() => bookFor(client)} disabled={client.blocked} title={client.blocked ? "Blacklisted addresses cannot be booked" : undefined}><Icon name="bookings" size={14} />Book</button>
               {!client.blocked && <button type="button" className="button button-ghost button-sm" onClick={() => startBlock(client)}>Blacklist</button>}
               <button type="button" className="icon-button customer-remove" onClick={() => void removeClient(client)} aria-label={`Remove ${client.name}`} title="Remove"><Icon name="trash" size={16} /></button>
@@ -229,6 +231,6 @@ export function CustomersView({ initialView }: { initialView: CustomersList }) {
         </>}
       </section>
     </>}
-    {composing && <EmailComposer recipients={selectedClients} onClose={() => setComposing(false)} onSent={(result) => { setComposing(false); setSelected(new Set()); if (result.queued === 0) { fail(result.skippedBlocked ? "None of the selected customers can receive email (all blacklisted)." : "No customers selected."); } else { const parts = [`${result.queued} message${result.queued === 1 ? "" : "s"} queued`]; if (result.skippedBlocked) parts.push(`${result.skippedBlocked} blacklisted skipped`); flash(`${parts.join(", ")}.`); } }} />}
+    {composing && <EmailComposer recipients={directRecipient ? [directRecipient] : selectedClients} onClose={() => { setComposing(false); setDirectRecipient(null); }} onSent={(result) => { const direct = directRecipient; setComposing(false); setDirectRecipient(null); if (!direct) setSelected(new Set()); if (result.queued === 0) { fail(result.skippedBlocked ? (direct ? "That customer is blacklisted and cannot receive email." : "None of the selected customers can receive email (all blacklisted).") : "No customers selected."); } else { const parts = [`${result.queued} message${result.queued === 1 ? "" : "s"} queued`]; if (result.skippedBlocked) parts.push(`${result.skippedBlocked} blacklisted skipped`); flash(`${parts.join(", ")}.`); } }} />}
   </div>;
 }

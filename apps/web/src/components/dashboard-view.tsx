@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Booking, EventType } from "./demo-data";
+import { dayKey } from "./bookings-calendar-state";
 import { frontendApi } from "./api-adapter";
 import { Icon } from "./icons";
 import { Avatar, Badge, ButtonLink, EmptyState, Metric, PageHeader, SectionHeader } from "./ui";
@@ -25,11 +26,16 @@ export function DashboardView() {
   const now = useMemo(() => new Date(), []);
   const allUpcoming = useMemo(() => bookings.filter((booking) => new Date(booking.startsAt) >= now && booking.status !== "canceled").sort((a, b) => a.startsAt.localeCompare(b.startsAt)), [bookings, now]);
   const upcoming = allUpcoming.slice(0, 3);
+  const todayKey = useMemo(() => dayKey(now, workspaceTimeZone), [now, workspaceTimeZone]);
+  const todayLabel = useMemo(() => new Intl.DateTimeFormat("en-US", { timeZone: workspaceTimeZone, weekday: "long", month: "long", day: "numeric" }).format(now), [now, workspaceTimeZone]);
+  const todayBookings = useMemo(() => bookings
+    .filter((booking) => booking.status !== "canceled" && dayKey(new Date(booking.startsAt), workspaceTimeZone) === todayKey)
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt)), [bookings, todayKey, workspaceTimeZone]);
   const monthBookings = bookings.filter((booking) => booking.status !== "canceled" && calendarMonthKey(new Date(booking.startsAt), workspaceTimeZone) === calendarMonthKey(now, workspaceTimeZone));
   const activeEvents = eventTypes.filter((event) => event.status === "published");
   const bookedHours = monthBookings.reduce((total, booking) => total + booking.duration, 0) / 60;
   const metrics = [
-    { label: "Upcoming", value: String(allUpcoming.length), detail: "Confirmed or awaiting payment", icon: "bookings" as const, tone: "brand" as const },
+    { label: "Upcoming", value: String(allUpcoming.length), detail: "Confirmed or pending", icon: "bookings" as const, tone: "brand" as const },
     { label: "This month", value: String(monthBookings.length), detail: "Bookings on your calendar", icon: "calendar" as const, tone: "blue" as const },
     { label: "Hours booked", value: bookedHours.toFixed(1), detail: "This calendar month", icon: "clock" as const, tone: "green" as const },
     { label: "Published links", value: String(activeEvents.length), detail: `${eventTypes.length} total services`, icon: "event-types" as const, tone: "amber" as const },
@@ -38,29 +44,42 @@ export function DashboardView() {
   if (loading) return <div className="page-stack"><PageHeader title="Studio overview" /><div className="sync-note" role="status"><span className="spinner" />Loading dashboard…</div></div>;
   if (error) return <div className="page-stack"><PageHeader title="Studio overview" /><section className="panel error-state" role="alert"><span><Icon name="x" /></span><h2>Dashboard did not load</h2><p>{error}</p><button className="button button-primary" type="button" onClick={() => { setLoading(true); setError(""); void load(); }}>Retry</button></section></div>;
   return (
-    <div className="page-stack">
-      <PageHeader title="Studio overview" description={`Bookings shown in ${workspaceTimeZone}.`} actions={canManage ? <ButtonLink href="/event-types/new" icon="plus">Create service</ButtonLink> : undefined} />
+    <div className="page-stack dashboard-page">
+      <PageHeader title="Studio overview" description={`Bookings shown in ${workspaceTimeZone}.`} actions={canManage ? <ButtonLink href="/bookings?add=1" icon="plus">Add booking</ButtonLink> : undefined} />
       <section className="metric-grid" aria-label="Booking overview">
         {metrics.map((metric) => <Metric key={metric.label} {...metric} />)}
       </section>
       <div className="dashboard-grid">
-        <section className="panel upcoming-panel">
-          <SectionHeader title="Upcoming bookings" description="Who is coming in next" action={<Link className="text-link" href="/bookings">View all <Icon name="arrow-right" size={14} /></Link>} />
+        <section className="panel upcoming-panel" aria-label="Today's appointments">
+          <SectionHeader title="Today" description={`${todayLabel} · ${todayBookings.length} ${todayBookings.length === 1 ? "appointment" : "appointments"}`} action={<Link className="text-link" href="/bookings">View calendar <Icon name="arrow-right" size={14} /></Link>} />
           <div className="booking-list">
-            {upcoming.map((booking) => (
-              <Link href={`/bookings?selected=${booking.id}`} className="booking-row" key={booking.id}>
-                <div className="date-chip"><strong>{new Intl.DateTimeFormat("en-US", { day: "numeric", timeZone: workspaceTimeZone }).format(new Date(booking.startsAt))}</strong><span>{new Intl.DateTimeFormat("en-US", { month: "short", timeZone: workspaceTimeZone }).format(new Date(booking.startsAt))}</span></div>
-                <div className="booking-main"><div><strong>{booking.invitee}</strong><Badge tone={booking.status === "pending" ? "warning" : "success"} dot>{booking.status}</Badge></div><span>{booking.eventTitle}</span><small><Icon name="clock" size={14} />{booking.timeLabel}<i>·</i><Icon name="team" size={14} />{booking.hostName}</small></div>
+            {todayBookings.map((booking) => (
+              <Link href={`/bookings?selected=${booking.id}`} className="booking-row today-row" key={booking.id}>
+                <div className="time-chip"><strong>{booking.timeLabel.split("–")[0]?.trim() || booking.timeLabel}</strong></div>
+                <div className="booking-main"><div><strong>{booking.invitee}</strong><Badge tone={booking.status === "pending" ? "warning" : "success"} dot>{booking.status}</Badge></div><span>{booking.eventTitle}</span><small><Icon name="clock" size={14} />{booking.duration} min<i>·</i><Icon name="team" size={14} />{booking.hostName}</small></div>
                 <Avatar name={booking.invitee} size="sm" />
                 <Icon name="arrow-right" size={16} />
               </Link>
             ))}
           </div>
-          {upcoming.length === 0 && !error && <EmptyState icon="calendar" title="No upcoming bookings" description="New confirmed bookings will appear here." />}
+          {todayBookings.length === 0 && <>
+            <EmptyState icon="calendar" title="Nothing booked today" description={upcoming.length ? "Your next appointments are below." : "New confirmed bookings will appear here."} />
+            {upcoming.length > 0 && <div className="today-next"><span className="preview-label">Next up</span><div className="booking-list">
+              {upcoming.map((booking) => (
+                <Link href={`/bookings?selected=${booking.id}`} className="booking-row" key={booking.id}>
+                  <div className="date-chip"><strong>{new Intl.DateTimeFormat("en-US", { day: "numeric", timeZone: workspaceTimeZone }).format(new Date(booking.startsAt))}</strong><span>{new Intl.DateTimeFormat("en-US", { month: "short", timeZone: workspaceTimeZone }).format(new Date(booking.startsAt))}</span></div>
+                  <div className="booking-main"><div><strong>{booking.invitee}</strong><Badge tone={booking.status === "pending" ? "warning" : "success"} dot>{booking.status}</Badge></div><span>{booking.eventTitle}</span><small><Icon name="clock" size={14} />{booking.timeLabel}<i>·</i><Icon name="team" size={14} />{booking.hostName}</small></div>
+                  <Avatar name={booking.invitee} size="sm" />
+                  <Icon name="arrow-right" size={16} />
+                </Link>
+              ))}
+            </div></div>}
+          </>}
         </section>
         <aside className="panel quick-panel">
           <SectionHeader title="Quick actions" />
           <div className="quick-actions">
+            {canManage && <Link href="/bookings?add=1"><span className="quick-icon"><Icon name="plus" /></span><div><strong>Add booking</strong><small>Book a client in</small></div><Icon name="arrow-right" /></Link>}
             {canManage && <Link href="/event-types/new"><span className="quick-icon"><Icon name="plus" /></span><div><strong>New service</strong><small>Create a booking experience</small></div><Icon name="arrow-right" /></Link>}
             {canManage && <Link href="/availability"><span className="quick-icon"><Icon name="availability" /></span><div><strong>Update availability</strong><small>Adjust your working hours</small></div><Icon name="arrow-right" /></Link>}
             {publicEvent && <Link href={`/book/${publicEvent.slug}`}><span className="quick-icon"><Icon name="link" /></span><div><strong>Share a booking link</strong><small>Preview the client flow</small></div><Icon name="arrow-right" /></Link>}
@@ -72,7 +91,7 @@ export function DashboardView() {
         <div className="event-summary-grid">
           {activeEvents.map((event) => <Link href={canManage ? `/event-types/${event.id}` : `/book/${event.slug}`} className="event-summary" key={event.id}><span className="event-color" style={{ background: event.color }} /><div><strong>{event.title}</strong><span>{event.durations.map((item) => item.label).join(" · ")} · {event.location}</span></div></Link>)}
         </div>
-        {activeEvents.length === 0 && <EmptyState icon="event-types" title="No published services" description={canManage ? "Publish an service to create a public booking link." : "No public booking links are currently available."} action={canManage ? <ButtonLink href="/event-types/new">Create service</ButtonLink> : undefined} />}
+        {activeEvents.length === 0 && <EmptyState icon="event-types" title="No published services" description={canManage ? "Publish a service to create a public booking link." : "No public booking links are currently available."} action={canManage ? <ButtonLink href="/event-types/new">Create service</ButtonLink> : undefined} />}
       </section>
     </div>
   );

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { EventType } from "./demo-data";
 import { frontendApi } from "./api-adapter";
 import { Icon } from "./icons";
-import { Badge, ButtonLink, PageHeader, Toggle } from "./ui";
+import { Badge, ButtonLink, EmptyState, PageHeader, Toggle } from "./ui";
 import { useWorkspaceAccess } from "./workspace-access";
 
 export function EventTypesView() {
@@ -50,5 +50,6 @@ export function EventTypesView() {
         <div className="event-card-foot"><Toggle checked={event.status === "published"} onChange={() => void toggle(event.id)} label={`${event.status === "published" ? "Unpublish" : "Publish"} ${event.title}`} disabled={savingId === event.id} /><span>{savingId === event.id ? "Saving…" : event.status === "published" ? "Accepting bookings" : "Not public"}</span><Link className="button button-secondary button-sm" href={`/event-types/${event.id}`}>Edit</Link></div>
       </article>)}
     </div>
+    {!loading && !error && filtered.length === 0 && <EmptyState icon={events.length === 0 ? "event-types" : "search"} title={events.length === 0 ? "No services yet" : "No services match"} description={events.length === 0 ? "Create a service to start taking bookings." : "Try a different search or filter."} action={events.length === 0 ? <ButtonLink href="/event-types/new">Create service</ButtonLink> : <button type="button" className="button button-secondary" onClick={() => { setQuery(""); setFilter("all"); }}>Clear filters</button>} />}
   </div>;
 }
