@@ -9,6 +9,7 @@ import { foregroundForBackground } from "./brand-contrast";
 import { PRICE_CURRENCY, PRICE_SYMBOL, priceFromInput, priceInputValue } from "./price-input";
 import { Icon } from "./icons";
 import { ActionButton, Badge, Field, Toggle } from "./ui";
+import { useUnsavedChangesWarning } from "./unsaved-changes";
 import { useWorkspaceAccess } from "./workspace-access";
 
 const defaultEvent: EventType = {
@@ -28,6 +29,7 @@ export function EventTypeEditor({ eventId, mode = "edit" }: { eventId?: string; 
   const [activeTab, setActiveTab] = useState<(typeof tabs)[number]>("Basics");
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [loading, setLoading] = useState(mode === "edit");
   const [loaded, setLoaded] = useState(mode === "create");
@@ -35,6 +37,7 @@ export function EventTypeEditor({ eventId, mode = "edit" }: { eventId?: string; 
   const [persistedSlug, setPersistedSlug] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const revision = useRef(0);
+  useUnsavedChangesWarning(dirty, "You have unsaved service changes. Leave this page?");
   // A duration is paid when it carries a price at all; 0 is a paid row the barber is still typing.
   const isPaid = event.durations.some((duration) => duration.price !== undefined);
   const currency = PRICE_CURRENCY;
@@ -50,15 +53,22 @@ export function EventTypeEditor({ eventId, mode = "edit" }: { eventId?: string; 
       setEvent({ ...item, locationType: "IN_PERSON", location: item.locationValue || "In person" });
       setPersistedSlug(item.status === "published" && item.slug ? item.slug : null);
       setLoaded(true);
+      setDirty(false);
     }).catch((reason) => { if (active) setSaveError(reason instanceof Error ? reason.message : "Could not load this service."); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [eventId, loadAttempt, mode]);
 
-  const update = <K extends keyof EventType>(key: K, value: EventType[K]) => { if (!loaded) return; revision.current += 1; setSaved(false); setEvent((item) => ({ ...item, [key]: value })); };
+  const update = <K extends keyof EventType>(key: K, value: EventType[K]) => { if (!loaded) return; revision.current += 1; setSaved(false); setDirty(true); setEvent((item) => ({ ...item, [key]: value })); };
   const updateDuration = (index: number, patch: Partial<DurationOption>) => update("durations", event.durations.map((item, i) => i === index ? { ...item, ...patch, label: patch.minutes ? `${patch.minutes} min` : item.label } : patch.isDefault ? { ...item, isDefault: false } : item));
   const addDuration = () => update("durations", [...event.durations, { minutes: 60, label: "60 min", isDefault: false, currency }]);
   const canPublish = Boolean(event.title.trim() && event.slug.trim() && event.durations.length > 0 && locationComplete);
   const completion = useMemo(() => [Boolean(event.title), Boolean(event.slug), event.durations.length > 0, locationComplete].filter(Boolean).length, [event.title, event.slug, event.durations.length, locationComplete]);
+  const missing = [
+    !event.title.trim() && "a service name",
+    !event.slug.trim() && "a booking link",
+    event.durations.length === 0 && "a duration",
+    !locationComplete && "a studio address",
+  ].filter((item): item is string => Boolean(item));
   const moveTab = (tab: (typeof tabs)[number], direction: -1 | 1) => { const index = tabs.indexOf(tab); const next = tabs[(index + direction + tabs.length) % tabs.length]!; setActiveTab(next); window.requestAnimationFrame(() => document.getElementById(`event-tab-${next.toLowerCase()}`)?.focus()); };
 
   async function save(publish = false) {
@@ -73,6 +83,7 @@ export function EventTypeEditor({ eventId, mode = "edit" }: { eventId?: string; 
         setEvent(persisted);
         revision.current += 1;
         setSaved(true);
+        setDirty(false);
         window.setTimeout(() => setSaved(false), 2600);
       }
     } catch (error) {
@@ -103,6 +114,10 @@ export function EventTypeEditor({ eventId, mode = "edit" }: { eventId?: string; 
       <aside className="editor-progress"><div className="progress-ring" style={{ "--progress": `${completion * 25}%` } as React.CSSProperties}><strong>{completion * 25}%</strong></div><div><strong>Service setup</strong><span>{completion === 4 ? "Ready to publish" : `${4 - completion} items remaining`}</span></div></aside>
       <section className="editor-content">
         <nav className="editor-tabs" aria-label="Service settings" role="tablist">{tabs.map((tab) => <button type="button" role="tab" id={`event-tab-${tab.toLowerCase()}`} aria-controls="event-settings-panel" aria-selected={activeTab === tab} tabIndex={activeTab === tab ? 0 : -1} key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setActiveTab(tab)} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); moveTab(tab, -1); } else if (event.key === "ArrowRight") { event.preventDefault(); moveTab(tab, 1); } else if (event.key === "Home") { event.preventDefault(); setActiveTab(tabs[0]); window.requestAnimationFrame(() => document.getElementById("event-tab-basics")?.focus()); } else if (event.key === "End") { event.preventDefault(); setActiveTab(tabs.at(-1)!); window.requestAnimationFrame(() => document.getElementById("event-tab-questions")?.focus()); } }}>{tab}</button>)}</nav>
+        <div className={`editor-readiness ${canPublish ? "is-ready" : ""}`} role="status">
+          <Icon name={canPublish ? "check" : "sparkles"} size={14} />
+          <span>{canPublish ? "Ready to publish" : `To publish, add ${missing.join(", ")}.`}</span>
+        </div>
         <div id="event-settings-panel" role="tabpanel" aria-labelledby={`event-tab-${activeTab.toLowerCase()}`}>
         {activeTab === "Basics" && <div className="editor-sections">
           <section className="form-card"><div className="form-card-title"><span className="number-chip">1</span><div><h2>Service details</h2><p>Give clients a clear reason to book.</p></div></div><div className="form-grid">

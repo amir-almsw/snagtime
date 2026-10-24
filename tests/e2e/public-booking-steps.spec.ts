@@ -12,6 +12,15 @@ test("@booking-steps invitee progress validates forward navigation and remains k
   await expect(firstTime).toBeVisible();
   expect(publicEventRequestCount).toBe(1);
 
+  // The strip lists available days only, so it can cross a month boundary with no visible break
+  // ("30, 2, 3"); every month a chip names has to be stated above the strip.
+  const monthBand = page.locator(".calendar-month-band");
+  await expect(monthBand).toBeVisible();
+  const bandText = (await monthBand.innerText()).toUpperCase();
+  const chipMonths = new Set((await page.locator(".calendar-week button i").allInnerTexts()).map((month) => month.trim().toUpperCase()));
+  expect(chipMonths.size).toBeGreaterThan(0);
+  for (const month of chipMonths) expect(bandText).toContain(month);
+
   const timeStep = page.getByRole("button", { name: "Time step" });
   const detailsStep = page.getByRole("button", { name: /Details step/ });
   const reviewStep = page.getByRole("button", { name: /Review step/ });

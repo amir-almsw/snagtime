@@ -7,6 +7,7 @@ import { frontendApi } from "./api-adapter";
 import { foregroundForBackground } from "./brand-contrast";
 import { Icon } from "./icons";
 import { ActionButton, Avatar, Badge, Field, PageHeader } from "./ui";
+import { useUnsavedChangesWarning } from "./unsaved-changes";
 
 const emptyBranding: WorkspaceBranding = { workspaceName: "", logoUrl: null, accentColor: "#2563eb", description: null, footerText: null };
 const acceptedLogoTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -54,6 +55,7 @@ export function SettingsView() {
   const editRevision = useRef(0);
   const loadRevision = useRef(0);
   const [error, setError] = useState("");
+  useUnsavedChangesWarning(dirty, "You have unsaved workspace changes. Leave this page?");
   const loadSettings = useCallback(() => {
     const requestRevision = ++loadRevision.current;
     const startingEditRevision = editRevision.current;
